@@ -1,13 +1,15 @@
 <#  =====================================================================
-    DriverDrop v1.1.0  -  free, open-source Windows driver & update picker
+    DriverDrop v1.2.0  -  free, open-source Windows driver & update picker
     ---------------------------------------------------------------------
     * Scans Microsoft Update for driver updates (or all updates)
     * Lets you tick exactly what you want installed - nothing more
     * Optional system restore point before installing
     * No ads, no paywall, no telemetry, one readable .ps1 file
 
-    v1.1: modern UI overhaul - custom dark title bar, segmented scope
-    picker, toggle switch, type badges, live filter, empty states.
+    v1.2: shows WHAT each update targets and WHEN the driver is from -
+    new Device and Released columns, a details pane for the selected
+    update, and a History view of everything installed so far.
+    v1.1: modern UI overhaul (custom title bar, segments, toggle, filter).
 
     Run straight from GitHub (any PowerShell window, it self-elevates):
 
@@ -16,13 +18,17 @@
     Or run the file locally:
 
         powershell -ExecutionPolicy Bypass -File .\DriverDrop.ps1
+
+    Note: if you re-run a NEWER version inside the SAME PowerShell window
+    you used for an older one, open a fresh window instead (the .NET row
+    classes cannot be redefined in a running session).
     ===================================================================== #>
 
 # ---------------------------------------------------------------- config
 # This URL is used to self-elevate when the script is run via  irm | iex
 $ScriptUrl = 'https://raw.githubusercontent.com/WilliamThogersen/driverdrop/staging/DriverDrop.ps1'
 $AppName   = 'DriverDrop'
-$AppVer    = '1.1.0'
+$AppVer    = '1.2.0'
 
 # ------------------------------------------------------------- elevation
 $principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
@@ -103,18 +109,35 @@ catch {
 
 Write-Host '  [*] Starting the interface...' -ForegroundColor Cyan
 
-# ------------------------------------------------------------- row class
-# A tiny .NET class so WPF checkbox binding is 100% reliable
+# ------------------------------------------------------------ row classes
+# Tiny .NET classes so WPF checkbox binding is 100% reliable
 if (-not ([System.Management.Automation.PSTypeName]'DriverDrop.UpdateItem').Type) {
     Add-Type -TypeDefinition @"
 namespace DriverDrop {
     public class UpdateItem {
-        public bool   IsSelected { get; set; }
-        public string Title      { get; set; }
-        public string Type       { get; set; }
-        public string KB         { get; set; }
-        public string Size       { get; set; }
-        public string UpdateID   { get; set; }
+        public bool   IsSelected   { get; set; }
+        public string Title        { get; set; }
+        public string Device       { get; set; }
+        public string Type         { get; set; }
+        public string Released     { get; set; }
+        public string KB           { get; set; }
+        public string Size         { get; set; }
+        public string UpdateID     { get; set; }
+        public string Manufacturer { get; set; }
+        public string Description  { get; set; }
+    }
+}
+"@
+}
+if (-not ([System.Management.Automation.PSTypeName]'DriverDrop.HistoryItem').Type) {
+    Add-Type -TypeDefinition @"
+namespace DriverDrop {
+    public class HistoryItem {
+        public string Date      { get; set; }
+        public string Title     { get; set; }
+        public string Operation { get; set; }
+        public string Result    { get; set; }
+        public string KB        { get; set; }
     }
 }
 "@
@@ -129,6 +152,9 @@ $sync.Results         = $null
 $sync.Items           = $null
 $sync.ScanDone        = $false
 $sync.InstallDone     = $false
+$sync.HistoryResults  = $null
+$sync.HistoryDone     = $false
+$sync.HistoryLoaded   = $false
 $sync.Busy            = $false
 $sync.RebootRequired  = $false
 
@@ -137,7 +163,7 @@ $sync.RebootRequired  = $false
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="DriverDrop - Windows driver and update picker"
-        Width="1040" Height="720" MinWidth="900" MinHeight="620"
+        Width="1120" Height="760" MinWidth="980" MinHeight="640"
         WindowStartupLocation="CenterScreen"
         WindowStyle="None" ResizeMode="CanResize"
         Background="#FF17171B"
@@ -457,7 +483,7 @@ $sync.RebootRequired  = $false
                      Foreground="{StaticResource TextBrush}" VerticalAlignment="Center" Margin="10,0,0,0"/>
           <Border CornerRadius="8" Background="#FF26262D" Padding="7,2"
                   VerticalAlignment="Center" Margin="8,0,0,0">
-            <TextBlock Text="v1.1.0" FontSize="10" Foreground="{StaticResource MutedBrush}"/>
+            <TextBlock Text="v1.2.0" FontSize="10" Foreground="{StaticResource MutedBrush}"/>
           </Border>
           <TextBlock Text="no ads - no paywall - your choice" FontSize="11"
                      Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="14,0,0,0"/>
@@ -489,12 +515,22 @@ $sync.RebootRequired  = $false
           <RowDefinition Height="Auto"/>
           <RowDefinition Height="*"/>
           <RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/>
           <RowDefinition Height="150"/>
           <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <!-- toolbar -->
         <DockPanel Grid.Row="0" Margin="0,0,0,14" LastChildFill="False">
+          <Border DockPanel.Dock="Left" CornerRadius="9" Background="{StaticResource PanelBrush}"
+                  Padding="3" VerticalAlignment="Center" Margin="0,0,12,0">
+            <StackPanel Orientation="Horizontal">
+              <RadioButton Name="ViewUpdates" Style="{StaticResource SegmentButton}"
+                           Content="Available" IsChecked="True" GroupName="view"/>
+              <RadioButton Name="ViewHistory" Style="{StaticResource SegmentButton}"
+                           Content="History" GroupName="view" Margin="2,0,0,0"/>
+            </StackPanel>
+          </Border>
           <Button Name="BtnScan" DockPanel.Dock="Left" Height="36">
             <StackPanel Orientation="Horizontal">
               <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="13"
@@ -502,7 +538,14 @@ $sync.RebootRequired  = $false
               <TextBlock Text="Scan for updates" VerticalAlignment="Center"/>
             </StackPanel>
           </Button>
-          <Border DockPanel.Dock="Left" Margin="12,0,0,0" CornerRadius="9"
+          <Button Name="BtnHistoryRefresh" DockPanel.Dock="Left" Height="36" Visibility="Collapsed">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="13"
+                         VerticalAlignment="Center" Margin="0,0,8,0"/>
+              <TextBlock Text="Refresh history" VerticalAlignment="Center"/>
+            </StackPanel>
+          </Button>
+          <Border Name="ScopeBox" DockPanel.Dock="Left" Margin="12,0,0,0" CornerRadius="9"
                   Background="{StaticResource PanelBrush}" Padding="3" VerticalAlignment="Center">
             <StackPanel Orientation="Horizontal">
               <RadioButton Name="RadDrivers" Style="{StaticResource SegmentButton}"
@@ -513,7 +556,7 @@ $sync.RebootRequired  = $false
           </Border>
           <Border DockPanel.Dock="Right" CornerRadius="9" Background="{StaticResource PanelBrush}"
                   BorderBrush="{StaticResource EdgeBrush}" BorderThickness="1"
-                  Width="230" Height="34" Padding="12,0" VerticalAlignment="Center">
+                  Width="220" Height="34" Padding="12,0" VerticalAlignment="Center">
             <DockPanel VerticalAlignment="Center">
               <TextBlock DockPanel.Dock="Left" Text="&#xE721;" FontFamily="Segoe MDL2 Assets"
                          FontSize="12" Foreground="#FF6E6E7A" VerticalAlignment="Center" Margin="0,0,8,0"/>
@@ -521,7 +564,7 @@ $sync.RebootRequired  = $false
                 <TextBox Name="FilterBox" Background="Transparent" BorderThickness="0"
                          Foreground="{StaticResource TextBrush}" CaretBrush="#FFEDEDEF"
                          VerticalAlignment="Center" Padding="0"/>
-                <TextBlock Name="FilterHint" Text="Filter updates" Foreground="#FF6E6E7A"
+                <TextBlock Name="FilterHint" Text="Filter list" Foreground="#FF6E6E7A"
                            VerticalAlignment="Center" IsHitTestVisible="False"/>
               </Grid>
             </DockPanel>
@@ -530,7 +573,7 @@ $sync.RebootRequired  = $false
                     Margin="0,0,14,0"/>
         </DockPanel>
 
-        <!-- update list card -->
+        <!-- list card -->
         <Border Grid.Row="1" Background="{StaticResource PanelBrush}" CornerRadius="10"
                 BorderBrush="{StaticResource EdgeBrush}" BorderThickness="1">
           <Grid>
@@ -549,7 +592,9 @@ $sync.RebootRequired  = $false
                 </DataGridTemplateColumn>
                 <DataGridTextColumn Header="Update" Binding="{Binding Title}" Width="*"
                                     IsReadOnly="True" ElementStyle="{StaticResource CellText}"/>
-                <DataGridTemplateColumn Header="Type" Width="110">
+                <DataGridTextColumn Header="Device" Binding="{Binding Device}" Width="190"
+                                    IsReadOnly="True" ElementStyle="{StaticResource CellText}"/>
+                <DataGridTemplateColumn Header="Type" Width="84">
                   <DataGridTemplateColumn.CellTemplate>
                     <DataTemplate>
                       <Border x:Name="pill" CornerRadius="9" Padding="10,3" Background="#FF32323A"
@@ -566,10 +611,50 @@ $sync.RebootRequired  = $false
                     </DataTemplate>
                   </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
-                <DataGridTextColumn Header="KB" Binding="{Binding KB}" Width="110"
+                <DataGridTextColumn Header="Released" Binding="{Binding Released}" Width="96"
                                     IsReadOnly="True" ElementStyle="{StaticResource CellTextMuted}"/>
-                <DataGridTextColumn Header="Size" Binding="{Binding Size}" Width="90"
+                <DataGridTextColumn Header="KB" Binding="{Binding KB}" Width="96"
                                     IsReadOnly="True" ElementStyle="{StaticResource CellTextMuted}"/>
+                <DataGridTextColumn Header="Size" Binding="{Binding Size}" Width="76"
+                                    IsReadOnly="True" ElementStyle="{StaticResource CellTextMuted}"/>
+              </DataGrid.Columns>
+            </DataGrid>
+
+            <DataGrid Name="GridHistory" AutoGenerateColumns="False" CanUserAddRows="False"
+                      HeadersVisibility="Column" GridLinesVisibility="None"
+                      Background="Transparent" BorderThickness="0" RowHeaderWidth="0"
+                      SelectionMode="Single" SelectionUnit="FullRow" IsReadOnly="True"
+                      Margin="6" Visibility="Collapsed">
+              <DataGrid.Columns>
+                <DataGridTextColumn Header="Date" Binding="{Binding Date}" Width="130"
+                                    ElementStyle="{StaticResource CellTextMuted}"/>
+                <DataGridTextColumn Header="Update" Binding="{Binding Title}" Width="*"
+                                    ElementStyle="{StaticResource CellText}"/>
+                <DataGridTextColumn Header="Action" Binding="{Binding Operation}" Width="110"
+                                    ElementStyle="{StaticResource CellTextMuted}"/>
+                <DataGridTemplateColumn Header="Result" Width="110">
+                  <DataGridTemplateColumn.CellTemplate>
+                    <DataTemplate>
+                      <Border x:Name="rpill" CornerRadius="9" Padding="10,3" Background="#FF32323A"
+                              HorizontalAlignment="Left" VerticalAlignment="Center">
+                        <TextBlock x:Name="rpillText" Text="{Binding Result}" FontSize="11"
+                                   Foreground="#FFB9B9C3"/>
+                      </Border>
+                      <DataTemplate.Triggers>
+                        <DataTrigger Binding="{Binding Result}" Value="Succeeded">
+                          <Setter TargetName="rpill" Property="Background" Value="#332FA35C"/>
+                          <Setter TargetName="rpillText" Property="Foreground" Value="#FF8FD6A8"/>
+                        </DataTrigger>
+                        <DataTrigger Binding="{Binding Result}" Value="Failed">
+                          <Setter TargetName="rpill" Property="Background" Value="#33E81123"/>
+                          <Setter TargetName="rpillText" Property="Foreground" Value="#FFFF9AA3"/>
+                        </DataTrigger>
+                      </DataTemplate.Triggers>
+                    </DataTemplate>
+                  </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTextColumn Header="KB" Binding="{Binding KB}" Width="100"
+                                    ElementStyle="{StaticResource CellTextMuted}"/>
               </DataGrid.Columns>
             </DataGrid>
 
@@ -589,8 +674,22 @@ $sync.RebootRequired  = $false
           </Grid>
         </Border>
 
+        <!-- details pane for the selected update -->
+        <Border Name="DetailsCard" Grid.Row="2" Background="{StaticResource PanelBrush}"
+                CornerRadius="10" BorderBrush="{StaticResource EdgeBrush}" BorderThickness="1"
+                Padding="14,10" Margin="0,12,0,0" Visibility="Collapsed">
+          <StackPanel>
+            <TextBlock Name="DetailTitle" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}"
+                       TextTrimming="CharacterEllipsis"/>
+            <TextBlock Name="DetailMeta" FontSize="11" Foreground="{StaticResource MutedBrush}"
+                       Margin="0,3,0,5" TextTrimming="CharacterEllipsis"/>
+            <TextBlock Name="DetailDesc" FontSize="12" Foreground="#FFB9B9C3" TextWrapping="Wrap"
+                       MaxHeight="50" TextTrimming="CharacterEllipsis"/>
+          </StackPanel>
+        </Border>
+
         <!-- restore point toggle + install -->
-        <DockPanel Grid.Row="2" Margin="0,14,0,14" LastChildFill="False">
+        <DockPanel Name="InstallBar" Grid.Row="3" Margin="0,12,0,14" LastChildFill="False">
           <CheckBox Name="ChkRestore" DockPanel.Dock="Left" IsChecked="True"
                     Style="{StaticResource ToggleSwitch}"
                     Content="Create a restore point before installing"/>
@@ -605,7 +704,7 @@ $sync.RebootRequired  = $false
         </DockPanel>
 
         <!-- activity log card -->
-        <Border Grid.Row="3" Background="{StaticResource PanelBrush}" CornerRadius="10"
+        <Border Grid.Row="4" Background="{StaticResource PanelBrush}" CornerRadius="10"
                 BorderBrush="{StaticResource EdgeBrush}" BorderThickness="1">
           <Grid>
             <Grid.RowDefinitions>
@@ -626,10 +725,10 @@ $sync.RebootRequired  = $false
         </Border>
 
         <!-- status bar -->
-        <DockPanel Grid.Row="4" Margin="2,10,2,0" LastChildFill="False">
+        <DockPanel Grid.Row="5" Margin="2,10,2,0" LastChildFill="False">
           <TextBlock Name="StatusText" Text="Ready." Foreground="{StaticResource MutedBrush}"
                      VerticalAlignment="Center" DockPanel.Dock="Left"/>
-          <TextBlock Text="tip: double-click a row or press Space to toggle" FontSize="11"
+          <TextBlock Text="tip: click a row for details - double-click or Space to toggle" FontSize="11"
                      Foreground="#FF5E5E68" VerticalAlignment="Center" DockPanel.Dock="Right"/>
         </DockPanel>
       </Grid>
@@ -645,10 +744,39 @@ foreach ($node in $xaml.SelectNodes('//*[@Name]')) {
 }
 $sync.Window = $window
 
+# per-view empty-state texts
+$sync.UEmptyT = 'No updates listed yet'
+$sync.UEmptyS = "Click 'Scan for updates' to check Microsoft Update."
+$sync.HEmptyT = 'History not loaded yet'
+$sync.HEmptyS = 'It loads automatically when you open this view.'
+
 # ----------------------------------------------------------- UI helpers
 function Add-Log {
     param([string]$Message)
     $sync.LogQueue.Enqueue("[$((Get-Date).ToString('HH:mm:ss'))] $Message")
+}
+
+function Set-UpdatesEmpty {
+    param([string]$Title, [string]$Sub)
+    $sync.UEmptyT = $Title; $sync.UEmptyS = $Sub
+}
+
+function Set-HistoryEmpty {
+    param([string]$Title, [string]$Sub)
+    $sync.HEmptyT = $Title; $sync.HEmptyS = $Sub
+}
+
+function Refresh-EmptyState {
+    $historyView = [bool]$sync.ViewHistory.IsChecked
+    $source = if ($historyView) { $sync.GridHistory.ItemsSource } else { $sync.GridUpdates.ItemsSource }
+    $hasRows = ($source -and $source.Count -gt 0)
+    if ($hasRows) {
+        $sync.EmptyState.Visibility = 'Collapsed'
+    } else {
+        if ($historyView) { $sync.EmptyTitle.Text = $sync.HEmptyT; $sync.EmptySub.Text = $sync.HEmptyS }
+        else              { $sync.EmptyTitle.Text = $sync.UEmptyT; $sync.EmptySub.Text = $sync.UEmptyS }
+        $sync.EmptyState.Visibility = 'Visible'
+    }
 }
 
 function Update-SelCount {
@@ -666,18 +794,45 @@ function Update-SelCount {
 
 function Set-Busy {
     param([bool]$On, [string]$Status = '')
-    $sync.BtnScan.IsEnabled      = -not $On
-    $sync.RadDrivers.IsEnabled   = -not $On
-    $sync.RadAll.IsEnabled       = -not $On
-    $sync.ChkSelectAll.IsEnabled = -not $On
+    $sync.BtnScan.IsEnabled           = -not $On
+    $sync.BtnHistoryRefresh.IsEnabled = -not $On
+    $sync.RadDrivers.IsEnabled        = -not $On
+    $sync.RadAll.IsEnabled            = -not $On
+    $sync.ViewUpdates.IsEnabled       = -not $On
+    $sync.ViewHistory.IsEnabled       = -not $On
+    $sync.ChkSelectAll.IsEnabled      = -not $On
     if ($On) {
-        $sync.BtnInstall.IsEnabled  = $false
+        $sync.BtnInstall.IsEnabled   = $false
         $sync.TopProgress.Visibility = 'Visible'
     } else {
         $sync.TopProgress.Visibility = 'Collapsed'
         Update-SelCount
     }
     if ($Status) { $sync.StatusText.Text = $Status }
+}
+
+function Show-View {
+    param([string]$View)
+    if ($View -eq 'History') {
+        $sync.GridUpdates.Visibility       = 'Collapsed'
+        $sync.GridHistory.Visibility       = 'Visible'
+        $sync.BtnScan.Visibility           = 'Collapsed'
+        $sync.BtnHistoryRefresh.Visibility = 'Visible'
+        $sync.ScopeBox.Visibility          = 'Collapsed'
+        $sync.ChkSelectAll.Visibility      = 'Collapsed'
+        $sync.InstallBar.Visibility        = 'Collapsed'
+        $sync.DetailsCard.Visibility       = 'Collapsed'
+    } else {
+        $sync.GridUpdates.Visibility       = 'Visible'
+        $sync.GridHistory.Visibility       = 'Collapsed'
+        $sync.BtnScan.Visibility           = 'Visible'
+        $sync.BtnHistoryRefresh.Visibility = 'Collapsed'
+        $sync.ScopeBox.Visibility          = 'Visible'
+        $sync.ChkSelectAll.Visibility      = 'Visible'
+        $sync.InstallBar.Visibility        = 'Visible'
+        if ($sync.GridUpdates.SelectedItem) { $sync.DetailsCard.Visibility = 'Visible' }
+    }
+    Refresh-EmptyState
 }
 
 function Start-Worker {
@@ -720,12 +875,34 @@ $ScanScript = {
             try { if ($u.KB) { $kb = [string]$u.KB } } catch {}
             $id = ''
             try { $id = [string]$u.Identity.UpdateID } catch {}
+
+            # what the update targets (drivers expose the device model)
+            $device = ''
+            try { if ($u.DriverModel) { $device = [string]$u.DriverModel } } catch {}
+            $manu = ''
+            try { if ($u.DriverManufacturer) { $manu = [string]$u.DriverManufacturer } } catch {}
+            if (-not $manu) { try { if ($u.DriverProvider) { $manu = [string]$u.DriverProvider } } catch {} }
+
+            # when the driver itself is from; falls back to the WU publish date
+            $released = ''
+            try { if ($u.DriverVerDate) { $released = ([datetime]$u.DriverVerDate).ToString('yyyy-MM-dd') } } catch {}
+            if (-not $released) {
+                try { if ($u.LastDeploymentChangeTime) { $released = ([datetime]$u.LastDeploymentChangeTime).ToString('yyyy-MM-dd') } } catch {}
+            }
+
+            $desc = ''
+            try { if ($u.Description) { $desc = ([string]$u.Description) -replace '\s+', ' ' } } catch {}
+
             [pscustomobject]@{
-                Title    = [string]$u.Title
-                Type     = $type
-                KB       = $kb
-                Size     = [string]$u.Size
-                UpdateID = $id
+                Title        = [string]$u.Title
+                Device       = $device
+                Type         = $type
+                Released     = $released
+                KB           = $kb
+                Size         = [string]$u.Size
+                UpdateID     = $id
+                Manufacturer = $manu
+                Description  = $desc
             }
         }
         $sync.Results = @($list)
@@ -738,6 +915,46 @@ $ScanScript = {
     }
     finally {
         $sync.ScanDone = $true
+        $sync.Busy = $false
+    }
+}
+
+# ---------------------------------------------------- worker: history
+$HistoryScript = {
+    function Log { param($m) $sync.LogQueue.Enqueue("[$((Get-Date).ToString('HH:mm:ss'))] $m") }
+    $ProgressPreference = 'SilentlyContinue'
+    try {
+        Import-Module PSWindowsUpdate -ErrorAction Stop
+        Log 'Loading Windows Update history...'
+        $hist = $null
+        try   { $hist = @(Get-WUHistory -Last 300 -ErrorAction Stop) }
+        catch { $hist = @(Get-WUHistory -ErrorAction Stop | Select-Object -First 300) }
+
+        $list = foreach ($h in $hist) {
+            $dateText = ''
+            try { $dateText = ([datetime]$h.Date).ToString('yyyy-MM-dd HH:mm') } catch {}
+            $kb = ''
+            try { if ($h.KB) { $kb = [string]$h.KB } } catch {}
+            if (-not $kb -and $h.Title -match '(KB\d{5,})') { $kb = $Matches[1] }
+            $op = ''
+            try { $op = ([string]$h.Operationname).Trim() } catch {}
+            [pscustomobject]@{
+                Date      = $dateText
+                Title     = [string]$h.Title
+                Operation = $op
+                Result    = [string]$h.Result
+                KB        = $kb
+            }
+        }
+        $sync.HistoryResults = @($list | Sort-Object Date -Descending)
+        Log "Loaded $($sync.HistoryResults.Count) history entries."
+    }
+    catch {
+        $sync.HistoryResults = @()
+        Log "ERROR loading history: $($_.Exception.Message)"
+    }
+    finally {
+        $sync.HistoryDone = $true
         $sync.Busy = $false
     }
 }
@@ -819,15 +1036,30 @@ $window.Add_StateChanged({
     }
 })
 
+# ------------------------------------------------------- history loading
+function Start-HistoryLoad {
+    if ($sync.Busy) { return }
+    Set-HistoryEmpty 'Loading update history...' 'One moment.'
+    Refresh-EmptyState
+    Set-Busy $true 'Loading update history...'
+    $null = Start-Worker -Script $HistoryScript
+}
+
 # ------------------------------------------------------------ UI events
+$sync.ViewUpdates.Add_Click({ Show-View 'Updates' })
+$sync.ViewHistory.Add_Click({
+    Show-View 'History'
+    if (-not $sync.HistoryLoaded) { Start-HistoryLoad }
+})
+$sync.BtnHistoryRefresh.Add_Click({ Start-HistoryLoad })
+
 $sync.BtnScan.Add_Click({
     if ($sync.Busy) { return }
     $sync.Items = $null
     $sync.GridUpdates.ItemsSource = $null
     $sync.FilterBox.Text = ''
-    $sync.EmptyTitle.Text = 'Scanning Microsoft Update...'
-    $sync.EmptySub.Text = 'This can take a minute or two.'
-    $sync.EmptyState.Visibility = 'Visible'
+    Set-UpdatesEmpty 'Scanning Microsoft Update...' 'This can take a minute or two.'
+    Refresh-EmptyState
     Set-Busy $true 'Scanning for updates...'
     Add-Log 'Starting scan...'
     $null = Start-Worker -Script $ScanScript -Vars @{ DriversOnly = [bool]$sync.RadDrivers.IsChecked }
@@ -849,12 +1081,35 @@ $sync.FilterBox.Add_TextChanged({
     if ($sync.GridUpdates.ItemsSource) {
         [System.Windows.Data.CollectionViewSource]::GetDefaultView($sync.GridUpdates.ItemsSource).Refresh()
     }
+    if ($sync.GridHistory.ItemsSource) {
+        [System.Windows.Data.CollectionViewSource]::GetDefaultView($sync.GridHistory.ItemsSource).Refresh()
+    }
 })
 
 # recount whenever a row checkbox (or column header) is clicked
 $sync.GridUpdates.AddHandler(
     [System.Windows.Controls.Primitives.ButtonBase]::ClickEvent,
     [System.Windows.RoutedEventHandler]{ Update-SelCount })
+
+# details pane follows the selected row
+$sync.GridUpdates.Add_SelectionChanged({
+    $it = $sync.GridUpdates.SelectedItem
+    if ($it -and -not [bool]$sync.ViewHistory.IsChecked) {
+        $sync.DetailTitle.Text = $it.Title
+        $meta = @()
+        if ($it.Device)       { $meta += $it.Device }
+        if ($it.Manufacturer -and $it.Manufacturer -ne $it.Device) { $meta += $it.Manufacturer }
+        if ($it.Released)     { $meta += "driver date: $($it.Released)" }
+        if ($it.KB)           { $meta += $it.KB }
+        if ($it.Size)         { $meta += $it.Size }
+        $sync.DetailMeta.Text = ($meta -join '   |   ')
+        if ($it.Description) { $sync.DetailDesc.Text = $it.Description }
+        else                 { $sync.DetailDesc.Text = 'No description provided by the publisher.' }
+        $sync.DetailsCard.Visibility = 'Visible'
+    } else {
+        $sync.DetailsCard.Visibility = 'Collapsed'
+    }
+})
 
 # double-click a row to toggle it
 $sync.GridUpdates.Add_MouseDoubleClick({
@@ -935,46 +1190,86 @@ $timer.Add_Tick({
         $items = [System.Collections.ObjectModel.ObservableCollection[DriverDrop.UpdateItem]]::new()
         foreach ($r in $sync.Results) {
             $item = New-Object DriverDrop.UpdateItem
-            $item.IsSelected = $true
-            $item.Title      = $r.Title
-            $item.Type       = $r.Type
-            $item.KB         = $r.KB
-            $item.Size       = $r.Size
-            $item.UpdateID   = $r.UpdateID
+            $item.IsSelected   = $true
+            $item.Title        = $r.Title
+            $item.Device       = $r.Device
+            $item.Type         = $r.Type
+            $item.Released     = $r.Released
+            $item.KB           = $r.KB
+            $item.Size         = $r.Size
+            $item.UpdateID     = $r.UpdateID
+            $item.Manufacturer = $r.Manufacturer
+            $item.Description  = $r.Description
             $items.Add($item)
         }
         $sync.Items = $items
         $sync.GridUpdates.ItemsSource = $items
 
-        # live filter over the list
+        # live filter over the updates list
         $view = [System.Windows.Data.CollectionViewSource]::GetDefaultView($items)
         $view.Filter = [Predicate[object]]{
             param($obj)
             $text = $sync.FilterBox.Text
             if ([string]::IsNullOrWhiteSpace($text)) { return $true }
-            if (-not $obj.Title) { return $false }
-            return ($obj.Title.IndexOf($text, [System.StringComparison]::OrdinalIgnoreCase) -ge 0)
+            $hit = $false
+            if ($obj.Title  -and $obj.Title.IndexOf($text,  [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { $hit = $true }
+            if ($obj.Device -and $obj.Device.IndexOf($text, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { $hit = $true }
+            return $hit
         }
 
         if ($items.Count -gt 0) {
-            $sync.EmptyState.Visibility = 'Collapsed'
             Set-Busy $false "Found $($items.Count) update(s). Untick anything you do not want, then install."
         } else {
-            $sync.EmptyTitle.Text = 'You are up to date!'
-            $sync.EmptySub.Text = 'No pending updates were found on Microsoft Update.'
-            $sync.EmptyState.Visibility = 'Visible'
+            Set-UpdatesEmpty 'You are up to date!' 'No pending updates were found on Microsoft Update.'
             Set-Busy $false 'No updates found - you are up to date!'
         }
+        Refresh-EmptyState
+    }
+
+    if ($sync.HistoryDone) {
+        $sync.HistoryDone = $false
+        $sync.HistoryLoaded = $true
+        $items = [System.Collections.ObjectModel.ObservableCollection[DriverDrop.HistoryItem]]::new()
+        foreach ($r in $sync.HistoryResults) {
+            $item = New-Object DriverDrop.HistoryItem
+            $item.Date      = $r.Date
+            $item.Title     = $r.Title
+            $item.Operation = $r.Operation
+            $item.Result    = $r.Result
+            $item.KB        = $r.KB
+            $items.Add($item)
+        }
+        $sync.GridHistory.ItemsSource = $items
+
+        # live filter over the history list
+        $view = [System.Windows.Data.CollectionViewSource]::GetDefaultView($items)
+        $view.Filter = [Predicate[object]]{
+            param($obj)
+            $text = $sync.FilterBox.Text
+            if ([string]::IsNullOrWhiteSpace($text)) { return $true }
+            $hit = $false
+            if ($obj.Title -and $obj.Title.IndexOf($text, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { $hit = $true }
+            if ($obj.KB    -and $obj.KB.IndexOf($text,    [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { $hit = $true }
+            return $hit
+        }
+
+        if ($items.Count -gt 0) {
+            Set-Busy $false "History loaded - $($items.Count) entries (newest first)."
+        } else {
+            Set-HistoryEmpty 'No history found' 'Windows has no recorded update history on this machine.'
+            Set-Busy $false 'No update history found.'
+        }
+        Refresh-EmptyState
     }
 
     if ($sync.InstallDone) {
         $sync.InstallDone = $false
         $sync.GridUpdates.ItemsSource = $null
         $sync.Items = $null
-        $sync.EmptyTitle.Text = 'Install finished'
-        $sync.EmptySub.Text = 'Run another scan to verify everything went through.'
-        $sync.EmptyState.Visibility = 'Visible'
+        $sync.HistoryLoaded = $false   # history changed, reload next time it is opened
+        Set-UpdatesEmpty 'Install finished' 'Run another scan to verify everything went through.'
         Set-Busy $false 'Install finished - run another scan to verify.'
+        Refresh-EmptyState
         if ($sync.RebootRequired) {
             $sync.RebootRequired = $false
             $answer = [System.Windows.MessageBox]::Show(
@@ -994,6 +1289,7 @@ Add-Log "$AppName v$AppVer ready on $env:COMPUTERNAME (PowerShell $($PSVersionTa
 Add-Log 'Pick a scope, click "Scan for updates", tick what you want, then "Install selected".'
 $sync.StatusText.Text = 'Ready - click "Scan for updates" to begin.'
 Update-SelCount
+Refresh-EmptyState
 $timer.Start()
 [void]$window.ShowDialog()
 $timer.Stop()
