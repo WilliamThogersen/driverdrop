@@ -1,17 +1,13 @@
 <#  =====================================================================
-    DriverDrop v1.3.0  -  free, open-source Windows driver & update picker
+    DriverDrop v1.4.0  -  free, open-source Windows driver & update picker
     ---------------------------------------------------------------------
     * Scans Microsoft Update for driver updates (or all updates)
     * Lets you tick exactly what you want installed - nothing more
     * Optional system restore point before installing
     * No ads, no paywall, no telemetry, one readable .ps1 file
 
-    v1.3: human-readable History - raw driver titles are parsed into
-    clean names, entries are grouped by day (Today / Yesterday / date),
-    duplicates are collapsed, Store app IDs are cleaned up, and every
-    row gets a category pill (driver class, Store app, Defender...).
-    v1.2: Device + Released columns, details pane, History view.
-    v1.1: modern UI overhaul (custom title bar, segments, toggle, filter).
+    Click the version badge in the title bar to see the full changelog,
+    or read CHANGELOG.md in the repo.
 
     Run straight from GitHub (any PowerShell window, it self-elevates):
 
@@ -30,7 +26,51 @@
 # This URL is used to self-elevate when the script is run via  irm | iex
 $ScriptUrl = 'https://raw.githubusercontent.com/WilliamThogersen/driverdrop/staging/DriverDrop.ps1'
 $AppName   = 'DriverDrop'
-$AppVer    = '1.3.0'
+$AppVer    = '1.4.0'
+
+# ------------------------------------------------------------- changelog
+# Newest first. Shown in-app when the version badge is clicked.
+$ChangeLog = @(
+    @{ Version = '1.4.0'; Date = '2026-07-31'; Changes = @(
+        'Added this changelog - click the version badge in the title bar any time',
+        'Added CHANGELOG.md to the repo so changes are tracked on GitHub too',
+        'Esc or clicking outside the panel closes the changelog'
+    )}
+    @{ Version = '1.3.0'; Date = '2026-07-31'; Changes = @(
+        'History is now human readable: raw driver titles are parsed into clean names',
+        'History entries are grouped by day (Today / Yesterday / date) with counts',
+        'Duplicates on the same day are collapsed into one row with an (x2), (x3) suffix',
+        'Store app IDs like 9NRZT3Q9R3DL-... are cleaned up and get a purple Store pill',
+        'Category pills show the driver class (System, LAN, Bluetooth...), Defender and Store',
+        'Uninstalls show as an amber Removed pill instead of a green Succeeded',
+        'Fake pre-1990 driver dates (the Intel 1968 trick) are hidden from titles',
+        'The filter box also matches history categories'
+    )}
+    @{ Version = '1.2.0'; Date = '2026-07-31'; Changes = @(
+        'New Released column: the manufacturer driver date for drivers, publish date otherwise',
+        'New Device column: the friendly hardware name the driver targets',
+        'Details pane: click a row to see device, manufacturer, driver date and description',
+        'New History view (Available / History switcher) of everything installed, newest first',
+        'History loads automatically, has a refresh button, and reloads after installs',
+        'The filter box also matches device names'
+    )}
+    @{ Version = '1.1.0'; Date = '2026-07-31'; Changes = @(
+        'Modern UI overhaul: custom dark title bar with min / max / close buttons',
+        'Segmented controls for scan scope and a toggle switch for the restore point',
+        'Type badges (Driver / Software), live filter box, and friendly empty states',
+        'Install button shows a live selected count and disables when nothing is ticked',
+        'Double-click a row or press Space to toggle; Select all respects the filter',
+        'Slim dark scrollbars, row hover, thin busy indicator, and a Clear log button'
+    )}
+    @{ Version = '1.0.0'; Date = '2026-07-31'; Changes = @(
+        'First release: dark WPF GUI over Windows Update, one self-contained .ps1',
+        'Scan Microsoft Update for drivers only or all updates, then pick what to install',
+        'Optional system restore point before installing (24h limit lifted automatically)',
+        'Reboot prompt when needed - never reboots on its own',
+        'Self-elevates via UAC and installs the PSWindowsUpdate module on first run',
+        'Runs straight from GitHub with the irm | iex one-liner'
+    )}
+)
 
 # ------------------------------------------------------------- elevation
 $principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
@@ -233,6 +273,29 @@ $sync.RebootRequired  = $false
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True">
                 <Setter TargetName="bd" Property="Background" Value="#22FFFFFF"/>
+                <Setter Property="Foreground" Value="#FFEDEDEF"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <!-- clickable version pill -->
+    <Style x:Key="PillButton" TargetType="Button">
+      <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="FontSize" Value="10"/>
+      <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="bd" Background="#FF26262D" CornerRadius="8" Padding="7,2">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="bd" Property="Background" Value="#FF34343D"/>
                 <Setter Property="Foreground" Value="#FFEDEDEF"/>
               </Trigger>
             </ControlTemplate.Triggers>
@@ -485,10 +548,11 @@ $sync.RebootRequired  = $false
           </Border>
           <TextBlock Text="DriverDrop" FontSize="15" FontWeight="SemiBold"
                      Foreground="{StaticResource TextBrush}" VerticalAlignment="Center" Margin="10,0,0,0"/>
-          <Border CornerRadius="8" Background="#FF26262D" Padding="7,2"
-                  VerticalAlignment="Center" Margin="8,0,0,0">
-            <TextBlock Text="v1.3.0" FontSize="10" Foreground="{StaticResource MutedBrush}"/>
-          </Border>
+          <Button Name="BtnVersion" Style="{StaticResource PillButton}" VerticalAlignment="Center"
+                  Margin="8,0,0,0" WindowChrome.IsHitTestVisibleInChrome="True"
+                  ToolTip="What is new - click to see the changelog">
+            <TextBlock Name="BtnVersionText" Text="v1.4.0"/>
+          </Button>
           <TextBlock Text="no ads - no paywall - your choice" FontSize="11"
                      Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="14,0,0,0"/>
         </StackPanel>
@@ -779,6 +843,38 @@ $sync.RebootRequired  = $false
                      Foreground="#FF5E5E68" VerticalAlignment="Center" DockPanel.Dock="Right"/>
         </DockPanel>
       </Grid>
+
+      <!-- changelog overlay -->
+      <Grid Name="ChangelogOverlay" Grid.Row="0" Grid.RowSpan="3" Visibility="Collapsed">
+        <Border Name="ChangelogBackdrop" Background="#CC101013"
+                WindowChrome.IsHitTestVisibleInChrome="True"/>
+        <Border Width="580" MaxHeight="540" Background="#FF212127" CornerRadius="12"
+                BorderBrush="#FF3A3A42" BorderThickness="1"
+                VerticalAlignment="Center" HorizontalAlignment="Center"
+                WindowChrome.IsHitTestVisibleInChrome="True">
+          <Grid>
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+            <DockPanel Grid.Row="0" Margin="20,16,12,6" LastChildFill="False">
+              <StackPanel DockPanel.Dock="Left">
+                <TextBlock Text="What is new" FontSize="16" FontWeight="SemiBold"
+                           Foreground="{StaticResource TextBrush}"/>
+                <TextBlock Text="Everything that changed, version by version" FontSize="11"
+                           Foreground="{StaticResource MutedBrush}" Margin="0,2,0,0"/>
+              </StackPanel>
+              <Button Name="BtnChangelogClose" Style="{StaticResource GhostButton}"
+                      DockPanel.Dock="Right" VerticalAlignment="Top">
+                <TextBlock Text="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="11"/>
+              </Button>
+            </DockPanel>
+            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="20,4,12,18">
+              <StackPanel Name="ChangelogPanel" Margin="0,0,8,0"/>
+            </ScrollViewer>
+          </Grid>
+        </Border>
+      </Grid>
     </Grid>
   </Border>
 </Window>
@@ -790,6 +886,7 @@ foreach ($node in $xaml.SelectNodes('//*[@Name]')) {
     $sync[$node.Name] = $window.FindName($node.Name)
 }
 $sync.Window = $window
+$sync.BtnVersionText.Text = "v$AppVer"
 
 # per-view empty-state texts
 $sync.UEmptyT = 'No updates listed yet'
@@ -880,6 +977,50 @@ function Show-View {
         if ($sync.GridUpdates.SelectedItem) { $sync.DetailsCard.Visibility = 'Visible' }
     }
     Refresh-EmptyState
+}
+
+function Show-Changelog {
+    $sync.ChangelogPanel.Children.Clear()
+    $bullet = [string][char]0x2022
+    $first  = $true
+    foreach ($entry in $ChangeLog) {
+        $header = New-Object System.Windows.Controls.StackPanel
+        $header.Orientation = 'Horizontal'
+        if ($first) { $header.Margin = '0,2,0,2' } else { $header.Margin = '0,16,0,2' }
+        $first = $false
+
+        $pillBorder = New-Object System.Windows.Controls.Border
+        $pillBorder.CornerRadius = '8'
+        $pillBorder.Background   = '#333D7EFF'
+        $pillBorder.Padding      = '8,2,8,2'
+        $pillText = New-Object System.Windows.Controls.TextBlock
+        $pillText.Text       = "v$($entry.Version)"
+        $pillText.FontSize   = 11
+        $pillText.FontWeight = 'SemiBold'
+        $pillText.Foreground = '#FF9DBBFF'
+        $pillBorder.Child = $pillText
+        [void]$header.Children.Add($pillBorder)
+
+        $dateText = New-Object System.Windows.Controls.TextBlock
+        $dateText.Text = $entry.Date
+        $dateText.FontSize = 11
+        $dateText.Foreground = '#FF9A9AA5'
+        $dateText.Margin = '8,0,0,0'
+        $dateText.VerticalAlignment = 'Center'
+        [void]$header.Children.Add($dateText)
+        [void]$sync.ChangelogPanel.Children.Add($header)
+
+        foreach ($change in $entry.Changes) {
+            $line = New-Object System.Windows.Controls.TextBlock
+            $line.Text = "$bullet  $change"
+            $line.TextWrapping = 'Wrap'
+            $line.FontSize = 12
+            $line.Foreground = '#FFB9B9C3'
+            $line.Margin = '4,4,0,0'
+            [void]$sync.ChangelogPanel.Children.Add($line)
+        }
+    }
+    $sync.ChangelogOverlay.Visibility = 'Visible'
 }
 
 function Start-Worker {
@@ -1159,6 +1300,18 @@ $window.Add_StateChanged({
     }
 })
 
+# --------------------------------------------------- changelog overlay
+$sync.BtnVersion.Add_Click({ Show-Changelog })
+$sync.BtnChangelogClose.Add_Click({ $sync.ChangelogOverlay.Visibility = 'Collapsed' })
+$sync.ChangelogBackdrop.Add_MouseLeftButtonDown({ $sync.ChangelogOverlay.Visibility = 'Collapsed' })
+$window.Add_PreviewKeyDown({
+    param($s, $e)
+    if ($e.Key -eq 'Escape' -and $sync.ChangelogOverlay.Visibility -eq 'Visible') {
+        $sync.ChangelogOverlay.Visibility = 'Collapsed'
+        $e.Handled = $true
+    }
+})
+
 # ------------------------------------------------------- history loading
 function Start-HistoryLoad {
     if ($sync.Busy) { return }
@@ -1415,6 +1568,7 @@ $timer.Add_Tick({
 # ------------------------------------------------------------------ start
 Add-Log "$AppName v$AppVer ready on $env:COMPUTERNAME (PowerShell $($PSVersionTable.PSVersion))"
 Add-Log 'Pick a scope, click "Scan for updates", tick what you want, then "Install selected".'
+Add-Log "New here? Click the v$AppVer badge in the title bar to see the changelog."
 $sync.StatusText.Text = 'Ready - click "Scan for updates" to begin.'
 Update-SelCount
 Refresh-EmptyState
