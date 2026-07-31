@@ -1,14 +1,17 @@
 <#  =====================================================================
-    DriverDrop  -  free, open-source Windows driver & update picker
+    DriverDrop v1.1.0  -  free, open-source Windows driver & update picker
     ---------------------------------------------------------------------
     * Scans Microsoft Update for driver updates (or all updates)
     * Lets you tick exactly what you want installed - nothing more
     * Optional system restore point before installing
     * No ads, no paywall, no telemetry, one readable .ps1 file
 
+    v1.1: modern UI overhaul - custom dark title bar, segmented scope
+    picker, toggle switch, type badges, live filter, empty states.
+
     Run straight from GitHub (any PowerShell window, it self-elevates):
 
-        irm "https://raw.githubusercontent.com/YOURUSER/YOURREPO/main/DriverDrop.ps1" | iex
+        irm "https://raw.githubusercontent.com/WilliamThogersen/driverdrop/staging/DriverDrop.ps1" | iex
 
     Or run the file locally:
 
@@ -16,11 +19,10 @@
     ===================================================================== #>
 
 # ---------------------------------------------------------------- config
-# EDIT THIS after you publish the repo - it is used to self-elevate
-# when the script is run from memory via  irm | iex
-$ScriptUrl = 'https://raw.githubusercontent.com/YOURUSER/YOURREPO/main/DriverDrop.ps1'
+# This URL is used to self-elevate when the script is run via  irm | iex
+$ScriptUrl = 'https://raw.githubusercontent.com/WilliamThogersen/driverdrop/staging/DriverDrop.ps1'
 $AppName   = 'DriverDrop'
-$AppVer    = '1.0.0'
+$AppVer    = '1.1.0'
 
 # ------------------------------------------------------------- elevation
 $principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
@@ -135,31 +137,46 @@ $sync.RebootRequired  = $false
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="DriverDrop - Windows driver and update picker"
-        Width="1000" Height="680" MinWidth="840" MinHeight="560"
+        Width="1040" Height="720" MinWidth="900" MinHeight="620"
         WindowStartupLocation="CenterScreen"
-        Background="#FF17171B" FontFamily="Segoe UI" FontSize="13">
+        WindowStyle="None" ResizeMode="CanResize"
+        Background="#FF17171B"
+        FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="13">
+
+  <WindowChrome.WindowChrome>
+    <WindowChrome CaptionHeight="48" ResizeBorderThickness="6"
+                  GlassFrameThickness="0" CornerRadius="0"
+                  UseAeroCaptionButtons="False"/>
+  </WindowChrome.WindowChrome>
+
   <Window.Resources>
     <SolidColorBrush x:Key="PanelBrush"  Color="#FF212127"/>
+    <SolidColorBrush x:Key="EdgeBrush"   Color="#FF2A2A31"/>
     <SolidColorBrush x:Key="TextBrush"   Color="#FFEDEDEF"/>
     <SolidColorBrush x:Key="MutedBrush"  Color="#FF9A9AA5"/>
     <SolidColorBrush x:Key="AccentBrush" Color="#FF3D7EFF"/>
 
+    <!-- primary buttons -->
     <Style TargetType="Button">
       <Setter Property="Foreground" Value="#FFFFFFFF"/>
       <Setter Property="Background" Value="#FF3D7EFF"/>
       <Setter Property="Padding" Value="16,8"/>
       <Setter Property="Cursor" Value="Hand"/>
       <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="Button">
-            <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="6">
+            <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="8">
               <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
                                 Margin="{TemplateBinding Padding}"/>
             </Border>
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True">
                 <Setter TargetName="bd" Property="Opacity" Value="0.85"/>
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="bd" Property="Opacity" Value="0.7"/>
               </Trigger>
               <Trigger Property="IsEnabled" Value="False">
                 <Setter TargetName="bd" Property="Background" Value="#FF3A3A42"/>
@@ -171,125 +188,453 @@ $sync.RebootRequired  = $false
       </Setter>
     </Style>
 
+    <!-- small transparent text button -->
+    <Style x:Key="GhostButton" TargetType="Button">
+      <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="FontSize" Value="11"/>
+      <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="bd" Background="Transparent" CornerRadius="6" Padding="9,4">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="bd" Property="Background" Value="#22FFFFFF"/>
+                <Setter Property="Foreground" Value="#FFEDEDEF"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <!-- title bar caption buttons -->
+    <Style x:Key="CaptionButton" TargetType="Button">
+      <Setter Property="Width" Value="46"/>
+      <Setter Property="Foreground" Value="#FFC9C9D2"/>
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="bd" Background="{TemplateBinding Background}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="bd" Property="Background" Value="#22FFFFFF"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="CaptionCloseButton" TargetType="Button">
+      <Setter Property="Width" Value="46"/>
+      <Setter Property="Foreground" Value="#FFC9C9D2"/>
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="bd" Background="{TemplateBinding Background}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="bd" Property="Background" Value="#FFE81123"/>
+                <Setter Property="Foreground" Value="#FFFFFFFF"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <!-- modern checkbox -->
     <Style TargetType="CheckBox">
       <Setter Property="Foreground" Value="#FFEDEDEF"/>
       <Setter Property="VerticalAlignment" Value="Center"/>
-    </Style>
-    <Style TargetType="RadioButton">
-      <Setter Property="Foreground" Value="#FFEDEDEF"/>
-      <Setter Property="VerticalAlignment" Value="Center"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="CheckBox">
+            <StackPanel Orientation="Horizontal" Background="Transparent">
+              <Border x:Name="box" Width="18" Height="18" CornerRadius="5" BorderThickness="1"
+                      BorderBrush="#FF4A4A55" Background="#FF26262D" VerticalAlignment="Center">
+                <TextBlock x:Name="check" Text="&#xE73E;" FontFamily="Segoe MDL2 Assets" FontSize="11"
+                           Foreground="#FFFFFFFF" HorizontalAlignment="Center" VerticalAlignment="Center"
+                           Visibility="Collapsed"/>
+              </Border>
+              <ContentPresenter Margin="8,0,0,0" VerticalAlignment="Center" RecognizesAccessKey="True"/>
+            </StackPanel>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsChecked" Value="True">
+                <Setter TargetName="box" Property="Background" Value="#FF3D7EFF"/>
+                <Setter TargetName="box" Property="BorderBrush" Value="#FF3D7EFF"/>
+                <Setter TargetName="check" Property="Visibility" Value="Visible"/>
+              </Trigger>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="box" Property="BorderBrush" Value="#FF6E6E7A"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
     </Style>
 
-    <Style TargetType="DataGridColumnHeader">
-      <Setter Property="Background" Value="#FF2A2A31"/>
+    <!-- toggle switch -->
+    <Style x:Key="ToggleSwitch" TargetType="CheckBox">
       <Setter Property="Foreground" Value="#FFEDEDEF"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="VerticalAlignment" Value="Center"/>
+      <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="CheckBox">
+            <StackPanel Orientation="Horizontal" Background="Transparent">
+              <Border x:Name="track" Width="40" Height="21" CornerRadius="10.5"
+                      Background="#FF3A3A42" VerticalAlignment="Center">
+                <Ellipse x:Name="thumb" Width="15" Height="15" Fill="#FFC9C9D2"
+                         HorizontalAlignment="Left" Margin="3,0,0,0"/>
+              </Border>
+              <ContentPresenter Margin="10,0,0,0" VerticalAlignment="Center"/>
+            </StackPanel>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsChecked" Value="True">
+                <Setter TargetName="track" Property="Background" Value="#FF3D7EFF"/>
+                <Setter TargetName="thumb" Property="HorizontalAlignment" Value="Right"/>
+                <Setter TargetName="thumb" Property="Margin" Value="0,0,3,0"/>
+                <Setter TargetName="thumb" Property="Fill" Value="#FFFFFFFF"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <!-- segmented control buttons -->
+    <Style x:Key="SegmentButton" TargetType="RadioButton">
+      <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="RadioButton">
+            <Border x:Name="bd" CornerRadius="7" Padding="14,6" Background="Transparent">
+              <ContentPresenter VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsChecked" Value="True">
+                <Setter TargetName="bd" Property="Background" Value="#FF34343D"/>
+                <Setter Property="Foreground" Value="#FFEDEDEF"/>
+              </Trigger>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Foreground" Value="#FFEDEDEF"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <!-- data grid -->
+    <Style TargetType="DataGridColumnHeader">
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
       <Setter Property="FontWeight" Value="SemiBold"/>
-      <Setter Property="Padding" Value="8,6"/>
+      <Setter Property="FontSize" Value="11"/>
+      <Setter Property="Padding" Value="8,8"/>
       <Setter Property="BorderThickness" Value="0,0,0,1"/>
-      <Setter Property="BorderBrush" Value="#FF3A3A42"/>
+      <Setter Property="BorderBrush" Value="{StaticResource EdgeBrush}"/>
     </Style>
     <Style TargetType="DataGridRow">
-      <Setter Property="Background" Value="#FF212127"/>
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="MinHeight" Value="38"/>
+      <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
       <Style.Triggers>
-        <Trigger Property="ItemsControl.AlternationIndex" Value="1">
-          <Setter Property="Background" Value="#FF1C1C22"/>
+        <Trigger Property="IsMouseOver" Value="True">
+          <Setter Property="Background" Value="#0FFFFFFF"/>
         </Trigger>
         <Trigger Property="IsSelected" Value="True">
-          <Setter Property="Background" Value="#FF2E4A80"/>
+          <Setter Property="Background" Value="#1AFFFFFF"/>
         </Trigger>
       </Style.Triggers>
     </Style>
     <Style TargetType="DataGridCell">
       <Setter Property="Foreground" Value="#FFEDEDEF"/>
       <Setter Property="BorderThickness" Value="0"/>
-      <Setter Property="Padding" Value="6,4"/>
       <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
       <Style.Triggers>
         <Trigger Property="IsSelected" Value="True">
           <Setter Property="Background" Value="Transparent"/>
         </Trigger>
       </Style.Triggers>
     </Style>
+    <Style x:Key="CellText" TargetType="TextBlock">
+      <Setter Property="VerticalAlignment" Value="Center"/>
+      <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+    </Style>
+    <Style x:Key="CellTextMuted" TargetType="TextBlock">
+      <Setter Property="VerticalAlignment" Value="Center"/>
+      <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+      <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
+    </Style>
+
+    <!-- slim scrollbars -->
+    <Style TargetType="ScrollBar">
+      <Setter Property="Width" Value="8"/>
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ScrollBar">
+            <Grid Background="Transparent">
+              <Track x:Name="PART_Track" IsDirectionReversed="True"
+                     Orientation="{TemplateBinding Orientation}">
+                <Track.DecreaseRepeatButton>
+                  <RepeatButton Command="ScrollBar.PageUpCommand" Opacity="0"
+                                Focusable="False" IsTabStop="False"/>
+                </Track.DecreaseRepeatButton>
+                <Track.IncreaseRepeatButton>
+                  <RepeatButton Command="ScrollBar.PageDownCommand" Opacity="0"
+                                Focusable="False" IsTabStop="False"/>
+                </Track.IncreaseRepeatButton>
+                <Track.Thumb>
+                  <Thumb>
+                    <Thumb.Template>
+                      <ControlTemplate TargetType="Thumb">
+                        <Border x:Name="tb" Background="#FF3A3A42" CornerRadius="4" Margin="1"/>
+                        <ControlTemplate.Triggers>
+                          <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="tb" Property="Background" Value="#FF55555F"/>
+                          </Trigger>
+                        </ControlTemplate.Triggers>
+                      </ControlTemplate>
+                    </Thumb.Template>
+                  </Thumb>
+                </Track.Thumb>
+              </Track>
+            </Grid>
+            <ControlTemplate.Triggers>
+              <Trigger Property="Orientation" Value="Horizontal">
+                <Setter TargetName="PART_Track" Property="IsDirectionReversed" Value="False"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+      <Style.Triggers>
+        <Trigger Property="Orientation" Value="Horizontal">
+          <Setter Property="Width" Value="Auto"/>
+          <Setter Property="Height" Value="8"/>
+        </Trigger>
+      </Style.Triggers>
+    </Style>
   </Window.Resources>
 
-  <Grid Margin="18">
-    <Grid.RowDefinitions>
-      <RowDefinition Height="Auto"/>
-      <RowDefinition Height="Auto"/>
-      <RowDefinition Height="*"/>
-      <RowDefinition Height="Auto"/>
-      <RowDefinition Height="130"/>
-      <RowDefinition Height="Auto"/>
-    </Grid.RowDefinitions>
+  <Border Name="RootBorder" Background="#FF17171B">
+    <Grid>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="48"/>
+        <RowDefinition Height="3"/>
+        <RowDefinition Height="*"/>
+      </Grid.RowDefinitions>
 
-    <!-- header -->
-    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,12">
-      <TextBlock Text="DriverDrop" FontSize="26" FontWeight="Bold"
-                 Foreground="{StaticResource TextBrush}"/>
-      <TextBlock Text="  free driver updater - no ads, no paywall, your choice"
-                 FontSize="14" Foreground="{StaticResource MutedBrush}"
-                 VerticalAlignment="Bottom" Margin="8,0,0,5"/>
-    </StackPanel>
+      <!-- custom title bar -->
+      <DockPanel Grid.Row="0" LastChildFill="False">
+        <StackPanel Orientation="Horizontal" DockPanel.Dock="Left" Margin="14,0,0,0">
+          <Border Width="26" Height="26" CornerRadius="7" Background="{StaticResource AccentBrush}"
+                  VerticalAlignment="Center">
+            <TextBlock Text="&#xE896;" FontFamily="Segoe MDL2 Assets" FontSize="13"
+                       Foreground="#FFFFFFFF" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+          </Border>
+          <TextBlock Text="DriverDrop" FontSize="15" FontWeight="SemiBold"
+                     Foreground="{StaticResource TextBrush}" VerticalAlignment="Center" Margin="10,0,0,0"/>
+          <Border CornerRadius="8" Background="#FF26262D" Padding="7,2"
+                  VerticalAlignment="Center" Margin="8,0,0,0">
+            <TextBlock Text="v1.1.0" FontSize="10" Foreground="{StaticResource MutedBrush}"/>
+          </Border>
+          <TextBlock Text="no ads - no paywall - your choice" FontSize="11"
+                     Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="14,0,0,0"/>
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
+          <Button Name="BtnMin" Style="{StaticResource CaptionButton}"
+                  WindowChrome.IsHitTestVisibleInChrome="True">
+            <TextBlock Text="&#xE921;" FontFamily="Segoe MDL2 Assets" FontSize="10"/>
+          </Button>
+          <Button Name="BtnMax" Style="{StaticResource CaptionButton}"
+                  WindowChrome.IsHitTestVisibleInChrome="True">
+            <TextBlock Name="MaxIcon" Text="&#xE922;" FontFamily="Segoe MDL2 Assets" FontSize="10"/>
+          </Button>
+          <Button Name="BtnClose" Style="{StaticResource CaptionCloseButton}"
+                  WindowChrome.IsHitTestVisibleInChrome="True">
+            <TextBlock Text="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="10"/>
+          </Button>
+        </StackPanel>
+      </DockPanel>
 
-    <!-- toolbar -->
-    <DockPanel Grid.Row="1" Margin="0,0,0,10" LastChildFill="False">
-      <Button Name="BtnScan" Content="Scan for updates" DockPanel.Dock="Left" Width="170"/>
-      <StackPanel Orientation="Horizontal" Margin="18,0,0,0" DockPanel.Dock="Left">
-        <RadioButton Name="RadDrivers" Content="Drivers only" IsChecked="True"
-                     GroupName="scope" Margin="0,0,16,0"/>
-        <RadioButton Name="RadAll" Content="All updates (Windows + drivers)" GroupName="scope"/>
-      </StackPanel>
-      <CheckBox Name="ChkSelectAll" Content="Select all" DockPanel.Dock="Right"/>
-    </DockPanel>
+      <!-- thin busy indicator -->
+      <ProgressBar Name="TopProgress" Grid.Row="1" Height="3" IsIndeterminate="True"
+                   Visibility="Collapsed" Background="Transparent"
+                   Foreground="{StaticResource AccentBrush}" BorderThickness="0"/>
 
-    <!-- update list -->
-    <Border Grid.Row="2" Background="{StaticResource PanelBrush}" CornerRadius="8" Padding="1">
-      <DataGrid Name="GridUpdates" AutoGenerateColumns="False" CanUserAddRows="False"
-                HeadersVisibility="Column" GridLinesVisibility="None"
-                Background="Transparent" BorderThickness="0"
-                RowHeaderWidth="0" AlternationCount="2" SelectionMode="Extended">
-        <DataGrid.Columns>
-          <DataGridTemplateColumn Width="44">
-            <DataGridTemplateColumn.CellTemplate>
-              <DataTemplate>
-                <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                          HorizontalAlignment="Center"/>
-              </DataTemplate>
-            </DataGridTemplateColumn.CellTemplate>
-          </DataGridTemplateColumn>
-          <DataGridTextColumn Header="Update" Binding="{Binding Title}" Width="*"   IsReadOnly="True"/>
-          <DataGridTextColumn Header="Type"   Binding="{Binding Type}"  Width="90"  IsReadOnly="True"/>
-          <DataGridTextColumn Header="KB"     Binding="{Binding KB}"    Width="110" IsReadOnly="True"/>
-          <DataGridTextColumn Header="Size"   Binding="{Binding Size}"  Width="90"  IsReadOnly="True"/>
-        </DataGrid.Columns>
-      </DataGrid>
-    </Border>
+      <!-- main content -->
+      <Grid Grid.Row="2" Margin="20,14,20,16">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="*"/>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="150"/>
+          <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
 
-    <!-- restore point + install -->
-    <DockPanel Grid.Row="3" Margin="0,12,0,12" LastChildFill="False">
-      <CheckBox Name="ChkRestore" DockPanel.Dock="Left" IsChecked="True"
-                Content="Create a system restore point before installing (recommended)"/>
-      <Button Name="BtnInstall" Content="Install selected" DockPanel.Dock="Right"
-              Width="180" Background="#FF2FA35C"/>
-    </DockPanel>
+        <!-- toolbar -->
+        <DockPanel Grid.Row="0" Margin="0,0,0,14" LastChildFill="False">
+          <Button Name="BtnScan" DockPanel.Dock="Left" Height="36">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="13"
+                         VerticalAlignment="Center" Margin="0,0,8,0"/>
+              <TextBlock Text="Scan for updates" VerticalAlignment="Center"/>
+            </StackPanel>
+          </Button>
+          <Border DockPanel.Dock="Left" Margin="12,0,0,0" CornerRadius="9"
+                  Background="{StaticResource PanelBrush}" Padding="3" VerticalAlignment="Center">
+            <StackPanel Orientation="Horizontal">
+              <RadioButton Name="RadDrivers" Style="{StaticResource SegmentButton}"
+                           Content="Drivers only" IsChecked="True" GroupName="scope"/>
+              <RadioButton Name="RadAll" Style="{StaticResource SegmentButton}"
+                           Content="All updates" GroupName="scope" Margin="2,0,0,0"/>
+            </StackPanel>
+          </Border>
+          <Border DockPanel.Dock="Right" CornerRadius="9" Background="{StaticResource PanelBrush}"
+                  BorderBrush="{StaticResource EdgeBrush}" BorderThickness="1"
+                  Width="230" Height="34" Padding="12,0" VerticalAlignment="Center">
+            <DockPanel VerticalAlignment="Center">
+              <TextBlock DockPanel.Dock="Left" Text="&#xE721;" FontFamily="Segoe MDL2 Assets"
+                         FontSize="12" Foreground="#FF6E6E7A" VerticalAlignment="Center" Margin="0,0,8,0"/>
+              <Grid>
+                <TextBox Name="FilterBox" Background="Transparent" BorderThickness="0"
+                         Foreground="{StaticResource TextBrush}" CaretBrush="#FFEDEDEF"
+                         VerticalAlignment="Center" Padding="0"/>
+                <TextBlock Name="FilterHint" Text="Filter updates" Foreground="#FF6E6E7A"
+                           VerticalAlignment="Center" IsHitTestVisible="False"/>
+              </Grid>
+            </DockPanel>
+          </Border>
+          <CheckBox Name="ChkSelectAll" Content="Select all" DockPanel.Dock="Right"
+                    Margin="0,0,14,0"/>
+        </DockPanel>
 
-    <!-- log -->
-    <Border Grid.Row="4" Background="{StaticResource PanelBrush}" CornerRadius="8">
-      <TextBox Name="LogBox" Background="Transparent" Foreground="#FFB9E8C5"
-               BorderThickness="0" FontFamily="Consolas" FontSize="12"
-               IsReadOnly="True" TextWrapping="Wrap"
-               VerticalScrollBarVisibility="Auto" Padding="10"/>
-    </Border>
+        <!-- update list card -->
+        <Border Grid.Row="1" Background="{StaticResource PanelBrush}" CornerRadius="10"
+                BorderBrush="{StaticResource EdgeBrush}" BorderThickness="1">
+          <Grid>
+            <DataGrid Name="GridUpdates" AutoGenerateColumns="False" CanUserAddRows="False"
+                      HeadersVisibility="Column" GridLinesVisibility="None"
+                      Background="Transparent" BorderThickness="0" RowHeaderWidth="0"
+                      SelectionMode="Extended" SelectionUnit="FullRow" Margin="6">
+              <DataGrid.Columns>
+                <DataGridTemplateColumn Width="44">
+                  <DataGridTemplateColumn.CellTemplate>
+                    <DataTemplate>
+                      <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                HorizontalAlignment="Center"/>
+                    </DataTemplate>
+                  </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTextColumn Header="Update" Binding="{Binding Title}" Width="*"
+                                    IsReadOnly="True" ElementStyle="{StaticResource CellText}"/>
+                <DataGridTemplateColumn Header="Type" Width="110">
+                  <DataGridTemplateColumn.CellTemplate>
+                    <DataTemplate>
+                      <Border x:Name="pill" CornerRadius="9" Padding="10,3" Background="#FF32323A"
+                              HorizontalAlignment="Left" VerticalAlignment="Center">
+                        <TextBlock x:Name="pillText" Text="{Binding Type}" FontSize="11"
+                                   Foreground="#FFB9B9C3"/>
+                      </Border>
+                      <DataTemplate.Triggers>
+                        <DataTrigger Binding="{Binding Type}" Value="Driver">
+                          <Setter TargetName="pill" Property="Background" Value="#333D7EFF"/>
+                          <Setter TargetName="pillText" Property="Foreground" Value="#FF9DBBFF"/>
+                        </DataTrigger>
+                      </DataTemplate.Triggers>
+                    </DataTemplate>
+                  </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTextColumn Header="KB" Binding="{Binding KB}" Width="110"
+                                    IsReadOnly="True" ElementStyle="{StaticResource CellTextMuted}"/>
+                <DataGridTextColumn Header="Size" Binding="{Binding Size}" Width="90"
+                                    IsReadOnly="True" ElementStyle="{StaticResource CellTextMuted}"/>
+              </DataGrid.Columns>
+            </DataGrid>
 
-    <!-- status bar -->
-    <DockPanel Grid.Row="5" Margin="0,10,0,0">
-      <ProgressBar Name="Progress" Width="180" Height="10" DockPanel.Dock="Right"
-                   Background="#FF2A2A31" Foreground="{StaticResource AccentBrush}"
-                   BorderThickness="0"/>
-      <TextBlock Name="StatusText" Text="Ready." Foreground="{StaticResource MutedBrush}"
-                 VerticalAlignment="Center"/>
-    </DockPanel>
-  </Grid>
+            <!-- empty state overlay -->
+            <StackPanel Name="EmptyState" VerticalAlignment="Center" HorizontalAlignment="Center"
+                        IsHitTestVisible="False">
+              <Border Width="64" Height="64" CornerRadius="32" Background="#FF26262D"
+                      HorizontalAlignment="Center">
+                <TextBlock Text="&#xE896;" FontFamily="Segoe MDL2 Assets" FontSize="26"
+                           Foreground="#FF6E6E7A" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+              </Border>
+              <TextBlock Name="EmptyTitle" Text="No updates listed yet" FontSize="15" FontWeight="SemiBold"
+                         Foreground="#FFC9C9D2" HorizontalAlignment="Center" Margin="0,14,0,4"/>
+              <TextBlock Name="EmptySub" Text="Click 'Scan for updates' to check Microsoft Update."
+                         FontSize="12" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Center"/>
+            </StackPanel>
+          </Grid>
+        </Border>
+
+        <!-- restore point toggle + install -->
+        <DockPanel Grid.Row="2" Margin="0,14,0,14" LastChildFill="False">
+          <CheckBox Name="ChkRestore" DockPanel.Dock="Left" IsChecked="True"
+                    Style="{StaticResource ToggleSwitch}"
+                    Content="Create a restore point before installing"/>
+          <Button Name="BtnInstall" DockPanel.Dock="Right" Height="36"
+                  Background="#FF2FA35C" IsEnabled="False">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="&#xE73E;" FontFamily="Segoe MDL2 Assets" FontSize="13"
+                         VerticalAlignment="Center" Margin="0,0,8,0"/>
+              <TextBlock Name="BtnInstallText" Text="Install selected" VerticalAlignment="Center"/>
+            </StackPanel>
+          </Button>
+        </DockPanel>
+
+        <!-- activity log card -->
+        <Border Grid.Row="3" Background="{StaticResource PanelBrush}" CornerRadius="10"
+                BorderBrush="{StaticResource EdgeBrush}" BorderThickness="1">
+          <Grid>
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+            <DockPanel Grid.Row="0" Margin="14,10,10,4" LastChildFill="False">
+              <TextBlock Text="ACTIVITY" FontSize="10" FontWeight="SemiBold"
+                         Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center"
+                         DockPanel.Dock="Left"/>
+              <Button Name="BtnClearLog" Style="{StaticResource GhostButton}" Content="Clear"
+                      DockPanel.Dock="Right"/>
+            </DockPanel>
+            <TextBox Name="LogBox" Grid.Row="1" Background="Transparent" Foreground="#FF9FD6AE"
+                     BorderThickness="0" FontFamily="Consolas" FontSize="12" IsReadOnly="True"
+                     TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Padding="12,2,12,10"/>
+          </Grid>
+        </Border>
+
+        <!-- status bar -->
+        <DockPanel Grid.Row="4" Margin="2,10,2,0" LastChildFill="False">
+          <TextBlock Name="StatusText" Text="Ready." Foreground="{StaticResource MutedBrush}"
+                     VerticalAlignment="Center" DockPanel.Dock="Left"/>
+          <TextBlock Text="tip: double-click a row or press Space to toggle" FontSize="11"
+                     Foreground="#FF5E5E68" VerticalAlignment="Center" DockPanel.Dock="Right"/>
+        </DockPanel>
+      </Grid>
+    </Grid>
+  </Border>
 </Window>
 '@
 
@@ -306,13 +651,32 @@ function Add-Log {
     $sync.LogQueue.Enqueue("[$((Get-Date).ToString('HH:mm:ss'))] $Message")
 }
 
+function Update-SelCount {
+    $total = 0
+    $sel   = 0
+    if ($sync.Items) {
+        $total = $sync.Items.Count
+        $sel   = @($sync.Items | Where-Object { $_.IsSelected }).Count
+    }
+    if ($sel -gt 0) { $sync.BtnInstallText.Text = "Install $sel selected" }
+    else            { $sync.BtnInstallText.Text = 'Install selected' }
+    $sync.BtnInstall.IsEnabled   = (-not $sync.Busy) -and ($sel -gt 0)
+    $sync.ChkSelectAll.IsChecked = ($total -gt 0 -and $sel -eq $total)
+}
+
 function Set-Busy {
     param([bool]$On, [string]$Status = '')
-    $sync.BtnScan.IsEnabled        = -not $On
-    $sync.BtnInstall.IsEnabled     = -not $On
-    $sync.RadDrivers.IsEnabled     = -not $On
-    $sync.RadAll.IsEnabled         = -not $On
-    $sync.Progress.IsIndeterminate = $On
+    $sync.BtnScan.IsEnabled      = -not $On
+    $sync.RadDrivers.IsEnabled   = -not $On
+    $sync.RadAll.IsEnabled       = -not $On
+    $sync.ChkSelectAll.IsEnabled = -not $On
+    if ($On) {
+        $sync.BtnInstall.IsEnabled  = $false
+        $sync.TopProgress.Visibility = 'Visible'
+    } else {
+        $sync.TopProgress.Visibility = 'Collapsed'
+        Update-SelCount
+    }
     if ($Status) { $sync.StatusText.Text = $Status }
 }
 
@@ -437,22 +801,84 @@ $InstallScript = {
     }
 }
 
+# ------------------------------------------------- window chrome events
+$sync.BtnMin.Add_Click({ $sync.Window.WindowState = 'Minimized' })
+$sync.BtnMax.Add_Click({
+    if ($sync.Window.WindowState -eq 'Maximized') { $sync.Window.WindowState = 'Normal' }
+    else { $sync.Window.WindowState = 'Maximized' }
+})
+$sync.BtnClose.Add_Click({ $sync.Window.Close() })
+$window.Add_StateChanged({
+    if ($sync.Window.WindowState -eq 'Maximized') {
+        # compensate for the invisible resize border so content is not clipped
+        $sync.RootBorder.Padding = New-Object System.Windows.Thickness 7
+        $sync.MaxIcon.Text = [string][char]0xE923
+    } else {
+        $sync.RootBorder.Padding = New-Object System.Windows.Thickness 0
+        $sync.MaxIcon.Text = [string][char]0xE922
+    }
+})
+
 # ------------------------------------------------------------ UI events
 $sync.BtnScan.Add_Click({
     if ($sync.Busy) { return }
     $sync.Items = $null
     $sync.GridUpdates.ItemsSource = $null
+    $sync.FilterBox.Text = ''
+    $sync.EmptyTitle.Text = 'Scanning Microsoft Update...'
+    $sync.EmptySub.Text = 'This can take a minute or two.'
+    $sync.EmptyState.Visibility = 'Visible'
     Set-Busy $true 'Scanning for updates...'
     Add-Log 'Starting scan...'
     $null = Start-Worker -Script $ScanScript -Vars @{ DriversOnly = [bool]$sync.RadDrivers.IsChecked }
 })
 
 $sync.ChkSelectAll.Add_Click({
-    if (-not $sync.Items) { return }
+    if (-not $sync.GridUpdates.ItemsSource) { $sync.ChkSelectAll.IsChecked = $false; return }
     $state = [bool]$sync.ChkSelectAll.IsChecked
-    foreach ($item in $sync.Items) { $item.IsSelected = $state }
-    $sync.GridUpdates.Items.Refresh()
+    # apply to the visible (filtered) rows only
+    $view = [System.Windows.Data.CollectionViewSource]::GetDefaultView($sync.GridUpdates.ItemsSource)
+    foreach ($item in $view) { $item.IsSelected = $state }
+    $view.Refresh()
+    Update-SelCount
 })
+
+$sync.FilterBox.Add_TextChanged({
+    if ([string]::IsNullOrEmpty($sync.FilterBox.Text)) { $sync.FilterHint.Visibility = 'Visible' }
+    else { $sync.FilterHint.Visibility = 'Collapsed' }
+    if ($sync.GridUpdates.ItemsSource) {
+        [System.Windows.Data.CollectionViewSource]::GetDefaultView($sync.GridUpdates.ItemsSource).Refresh()
+    }
+})
+
+# recount whenever a row checkbox (or column header) is clicked
+$sync.GridUpdates.AddHandler(
+    [System.Windows.Controls.Primitives.ButtonBase]::ClickEvent,
+    [System.Windows.RoutedEventHandler]{ Update-SelCount })
+
+# double-click a row to toggle it
+$sync.GridUpdates.Add_MouseDoubleClick({
+    if ($sync.Busy) { return }
+    $item = $sync.GridUpdates.SelectedItem
+    if ($item) {
+        $item.IsSelected = -not $item.IsSelected
+        $sync.GridUpdates.Items.Refresh()
+        Update-SelCount
+    }
+})
+
+# Space toggles all highlighted rows
+$sync.GridUpdates.Add_PreviewKeyDown({
+    param($s, $e)
+    if ($e.Key -eq 'Space' -and -not $sync.Busy -and $sync.GridUpdates.SelectedItems.Count -gt 0) {
+        foreach ($item in $sync.GridUpdates.SelectedItems) { $item.IsSelected = -not $item.IsSelected }
+        $sync.GridUpdates.Items.Refresh()
+        Update-SelCount
+        $e.Handled = $true
+    }
+})
+
+$sync.BtnClearLog.Add_Click({ $sync.LogBox.Clear() })
 
 $sync.BtnInstall.Add_Click({
     if ($sync.Busy) { return }
@@ -519,20 +945,36 @@ $timer.Add_Tick({
         }
         $sync.Items = $items
         $sync.GridUpdates.ItemsSource = $items
-        $sync.ChkSelectAll.IsChecked = ($items.Count -gt 0)
+
+        # live filter over the list
+        $view = [System.Windows.Data.CollectionViewSource]::GetDefaultView($items)
+        $view.Filter = [Predicate[object]]{
+            param($obj)
+            $text = $sync.FilterBox.Text
+            if ([string]::IsNullOrWhiteSpace($text)) { return $true }
+            if (-not $obj.Title) { return $false }
+            return ($obj.Title.IndexOf($text, [System.StringComparison]::OrdinalIgnoreCase) -ge 0)
+        }
+
         if ($items.Count -gt 0) {
-            Set-Busy $false "Found $($items.Count) update(s). Untick anything you do not want, then click Install."
+            $sync.EmptyState.Visibility = 'Collapsed'
+            Set-Busy $false "Found $($items.Count) update(s). Untick anything you do not want, then install."
         } else {
+            $sync.EmptyTitle.Text = 'You are up to date!'
+            $sync.EmptySub.Text = 'No pending updates were found on Microsoft Update.'
+            $sync.EmptyState.Visibility = 'Visible'
             Set-Busy $false 'No updates found - you are up to date!'
         }
     }
 
     if ($sync.InstallDone) {
         $sync.InstallDone = $false
-        Set-Busy $false 'Install finished - run another scan to verify.'
         $sync.GridUpdates.ItemsSource = $null
         $sync.Items = $null
-        $sync.ChkSelectAll.IsChecked = $false
+        $sync.EmptyTitle.Text = 'Install finished'
+        $sync.EmptySub.Text = 'Run another scan to verify everything went through.'
+        $sync.EmptyState.Visibility = 'Visible'
+        Set-Busy $false 'Install finished - run another scan to verify.'
         if ($sync.RebootRequired) {
             $sync.RebootRequired = $false
             $answer = [System.Windows.MessageBox]::Show(
@@ -551,6 +993,7 @@ $timer.Add_Tick({
 Add-Log "$AppName v$AppVer ready on $env:COMPUTERNAME (PowerShell $($PSVersionTable.PSVersion))"
 Add-Log 'Pick a scope, click "Scan for updates", tick what you want, then "Install selected".'
 $sync.StatusText.Text = 'Ready - click "Scan for updates" to begin.'
+Update-SelCount
 $timer.Start()
 [void]$window.ShowDialog()
 $timer.Stop()
