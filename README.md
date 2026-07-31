@@ -26,6 +26,7 @@ powershell -ExecutionPolicy Bypass -File .\DriverDrop.ps1
 - Optionally creates a **system restore point** before touching anything (on by default)
 - Installs only what you ticked, streaming progress into a live log
 - A **History view** shows everything installed so far — grouped by day, deduplicated, with raw Windows Update titles parsed into human-readable names
+- A **Devices view** inventories every installed driver with its date, flags devices with problems, and gives you copy-ready hardware IDs plus one-click links to the Microsoft Update Catalog, your PC maker and your GPU vendor — the safe way to handle drivers Windows Update doesn't carry
 - Filter box, select all, keyboard toggling, and a built-in changelog (click the version badge)
 - Tells you if a reboot is needed and offers to do it — never reboots on its own
 

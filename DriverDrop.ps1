@@ -1,9 +1,11 @@
 <#  =====================================================================
-    DriverDrop v1.4.1  -  free, open-source Windows driver & update picker
+    DriverDrop v1.5.0  -  free, open-source Windows driver & update picker
     ---------------------------------------------------------------------
     * Scans Microsoft Update for driver updates (or all updates)
     * Lets you tick exactly what you want installed - nothing more
     * Optional system restore point before installing
+    * Devices view: every installed driver, problem devices, hardware IDs
+      and safe links (Microsoft Update Catalog, your PC maker, GPU vendor)
     * No ads, no paywall, no telemetry, one readable .ps1 file
 
     Click the version badge in the title bar to see the full changelog,
@@ -32,11 +34,19 @@
 # PowerShell window so this fallback is never used.
 $ScriptUrl = 'https://raw.githubusercontent.com/WilliamThogersen/driverdrop/prod/DriverDrop.ps1'
 $AppName   = 'DriverDrop'
-$AppVer    = '1.4.1'
+$AppVer    = '1.5.0'
 
 # ------------------------------------------------------------- changelog
 # Newest first. Shown in-app when the version badge is clicked.
 $ChangeLog = @(
+    @{ Version = '1.5.0'; Date = '2026-07-31'; Changes = @(
+        'New Devices view: every installed device with its driver version and date',
+        'Devices with problems (no driver, errors) are flagged and grouped at the top',
+        'Click a device for its hardware ID, with one-click copy',
+        'Search the Microsoft Update Catalog by hardware ID for drivers WU does not offer',
+        'Quick links to your PC maker and GPU vendor driver pages, auto-detected',
+        'DriverDrop still never downloads drivers from third-party driver packs'
+    )}
     @{ Version = '1.4.1'; Date = '2026-07-31'; Changes = @(
         'Two-branch setup: prod is the stable branch, staging is ongoing development',
         'The public one-liner and self-elevation now always use the stable prod branch',
@@ -197,6 +207,24 @@ namespace DriverDrop {
 }
 "@
 }
+if (-not ([System.Management.Automation.PSTypeName]'DriverDrop.DeviceItem').Type) {
+    Add-Type -TypeDefinition @"
+namespace DriverDrop {
+    public class DeviceItem {
+        public string Name       { get; set; }
+        public string Group      { get; set; }
+        public string Class      { get; set; }
+        public string Version    { get; set; }
+        public string DriverDate { get; set; }
+        public string Status     { get; set; }
+        public string StatusKind { get; set; }
+        public string HardwareID { get; set; }
+        public string Provider   { get; set; }
+        public string Inf        { get; set; }
+    }
+}
+"@
+}
 
 Add-Type -AssemblyName PresentationFramework
 
@@ -210,6 +238,14 @@ $sync.InstallDone     = $false
 $sync.HistoryResults  = $null
 $sync.HistoryDone     = $false
 $sync.HistoryLoaded   = $false
+$sync.DevicesResults  = $null
+$sync.DevicesDone     = $false
+$sync.DevicesLoaded   = $false
+$sync.OemLabel        = ''
+$sync.OemUrl          = ''
+$sync.GpuLabel        = ''
+$sync.GpuUrl          = ''
+$sync.CurrentHwid     = ''
 $sync.Busy            = $false
 $sync.RebootRequired  = $false
 
@@ -562,7 +598,7 @@ $sync.RebootRequired  = $false
           <Button Name="BtnVersion" Style="{StaticResource PillButton}" VerticalAlignment="Center"
                   Margin="8,0,0,0" WindowChrome.IsHitTestVisibleInChrome="True"
                   ToolTip="What is new - click to see the changelog">
-            <TextBlock Name="BtnVersionText" Text="v1.4.1"/>
+            <TextBlock Name="BtnVersionText" Text="v1.5.0"/>
           </Button>
           <TextBlock Text="no ads - no paywall - your choice" FontSize="11"
                      Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="14,0,0,0"/>
@@ -608,6 +644,8 @@ $sync.RebootRequired  = $false
                            Content="Available" IsChecked="True" GroupName="view"/>
               <RadioButton Name="ViewHistory" Style="{StaticResource SegmentButton}"
                            Content="History" GroupName="view" Margin="2,0,0,0"/>
+              <RadioButton Name="ViewDevices" Style="{StaticResource SegmentButton}"
+                           Content="Devices" GroupName="view" Margin="2,0,0,0"/>
             </StackPanel>
           </Border>
           <Button Name="BtnScan" DockPanel.Dock="Left" Height="36">
@@ -624,6 +662,13 @@ $sync.RebootRequired  = $false
               <TextBlock Text="Refresh history" VerticalAlignment="Center"/>
             </StackPanel>
           </Button>
+          <Button Name="BtnDevicesRefresh" DockPanel.Dock="Left" Height="36" Visibility="Collapsed">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="13"
+                         VerticalAlignment="Center" Margin="0,0,8,0"/>
+              <TextBlock Text="Rescan devices" VerticalAlignment="Center"/>
+            </StackPanel>
+          </Button>
           <Border Name="ScopeBox" DockPanel.Dock="Left" Margin="12,0,0,0" CornerRadius="9"
                   Background="{StaticResource PanelBrush}" Padding="3" VerticalAlignment="Center">
             <StackPanel Orientation="Horizontal">
@@ -633,6 +678,10 @@ $sync.RebootRequired  = $false
                            Content="All updates" GroupName="scope" Margin="2,0,0,0"/>
             </StackPanel>
           </Border>
+          <Button Name="BtnOem" Style="{StaticResource GhostButton}" DockPanel.Dock="Left"
+                  Margin="12,0,0,0" Visibility="Collapsed" Content="PC vendor drivers"/>
+          <Button Name="BtnGpu" Style="{StaticResource GhostButton}" DockPanel.Dock="Left"
+                  Margin="4,0,0,0" Visibility="Collapsed" Content="GPU drivers"/>
           <Border DockPanel.Dock="Right" CornerRadius="9" Background="{StaticResource PanelBrush}"
                   BorderBrush="{StaticResource EdgeBrush}" BorderThickness="1"
                   Width="220" Height="34" Padding="12,0" VerticalAlignment="Center">
@@ -780,6 +829,64 @@ $sync.RebootRequired  = $false
               </DataGrid.Columns>
             </DataGrid>
 
+            <DataGrid Name="GridDevices" AutoGenerateColumns="False" CanUserAddRows="False"
+                      HeadersVisibility="Column" GridLinesVisibility="None"
+                      Background="Transparent" BorderThickness="0" RowHeaderWidth="0"
+                      SelectionMode="Single" SelectionUnit="FullRow" IsReadOnly="True"
+                      Margin="6" Visibility="Collapsed">
+              <DataGrid.GroupStyle>
+                <GroupStyle>
+                  <GroupStyle.HeaderTemplate>
+                    <DataTemplate>
+                      <StackPanel Orientation="Horizontal" Margin="6,14,0,4">
+                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="12"
+                                   Foreground="#FFC9C9D2" VerticalAlignment="Center"/>
+                        <Border CornerRadius="8" Background="#FF32323A" Padding="7,1"
+                                Margin="8,0,0,0" VerticalAlignment="Center">
+                          <TextBlock Text="{Binding ItemCount}" FontSize="10" Foreground="#FF9A9AA5"/>
+                        </Border>
+                      </StackPanel>
+                    </DataTemplate>
+                  </GroupStyle.HeaderTemplate>
+                </GroupStyle>
+              </DataGrid.GroupStyle>
+              <DataGrid.Columns>
+                <DataGridTextColumn Header="Device" Binding="{Binding Name}" Width="*"
+                                    ElementStyle="{StaticResource CellText}"/>
+                <DataGridTextColumn Header="Class" Binding="{Binding Class}" Width="110"
+                                    ElementStyle="{StaticResource CellTextMuted}"/>
+                <DataGridTextColumn Header="Driver version" Binding="{Binding Version}" Width="130"
+                                    ElementStyle="{StaticResource CellTextMuted}"/>
+                <DataGridTextColumn Header="Driver date" Binding="{Binding DriverDate}" Width="96"
+                                    ElementStyle="{StaticResource CellTextMuted}"/>
+                <DataGridTemplateColumn Header="Status" Width="104">
+                  <DataGridTemplateColumn.CellTemplate>
+                    <DataTemplate>
+                      <Border x:Name="spill" CornerRadius="9" Padding="10,3" Background="#FF32323A"
+                              HorizontalAlignment="Left" VerticalAlignment="Center">
+                        <TextBlock x:Name="spillText" Text="{Binding Status}" FontSize="11"
+                                   Foreground="#FFB9B9C3"/>
+                      </Border>
+                      <DataTemplate.Triggers>
+                        <DataTrigger Binding="{Binding StatusKind}" Value="Ok">
+                          <Setter TargetName="spill" Property="Background" Value="#332FA35C"/>
+                          <Setter TargetName="spillText" Property="Foreground" Value="#FF8FD6A8"/>
+                        </DataTrigger>
+                        <DataTrigger Binding="{Binding StatusKind}" Value="NoDriver">
+                          <Setter TargetName="spill" Property="Background" Value="#33E81123"/>
+                          <Setter TargetName="spillText" Property="Foreground" Value="#FFFF9AA3"/>
+                        </DataTrigger>
+                        <DataTrigger Binding="{Binding StatusKind}" Value="Problem">
+                          <Setter TargetName="spill" Property="Background" Value="#33E8A33D"/>
+                          <Setter TargetName="spillText" Property="Foreground" Value="#FFE8C08A"/>
+                        </DataTrigger>
+                      </DataTemplate.Triggers>
+                    </DataTemplate>
+                  </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+              </DataGrid.Columns>
+            </DataGrid>
+
             <!-- empty state overlay -->
             <StackPanel Name="EmptyState" VerticalAlignment="Center" HorizontalAlignment="Center"
                         IsHitTestVisible="False">
@@ -796,7 +903,7 @@ $sync.RebootRequired  = $false
           </Grid>
         </Border>
 
-        <!-- details pane for the selected update -->
+        <!-- details pane for the selected row -->
         <Border Name="DetailsCard" Grid.Row="2" Background="{StaticResource PanelBrush}"
                 CornerRadius="10" BorderBrush="{StaticResource EdgeBrush}" BorderThickness="1"
                 Padding="14,10" Margin="0,12,0,0" Visibility="Collapsed">
@@ -807,6 +914,13 @@ $sync.RebootRequired  = $false
                        Margin="0,3,0,5" TextTrimming="CharacterEllipsis"/>
             <TextBlock Name="DetailDesc" FontSize="12" Foreground="#FFB9B9C3" TextWrapping="Wrap"
                        MaxHeight="50" TextTrimming="CharacterEllipsis"/>
+            <StackPanel Name="DetailActions" Orientation="Horizontal" Margin="0,8,0,0"
+                        Visibility="Collapsed">
+              <Button Name="BtnCopyHwid" Style="{StaticResource GhostButton}"
+                      Content="Copy hardware ID"/>
+              <Button Name="BtnCatalog" Style="{StaticResource GhostButton}" Margin="8,0,0,0"
+                      Content="Search Microsoft Update Catalog"/>
+            </StackPanel>
           </StackPanel>
         </Border>
 
@@ -904,6 +1018,8 @@ $sync.UEmptyT = 'No updates listed yet'
 $sync.UEmptyS = "Click 'Scan for updates' to check Microsoft Update."
 $sync.HEmptyT = 'History not loaded yet'
 $sync.HEmptyS = 'It loads automatically when you open this view.'
+$sync.DEmptyT = 'Devices not scanned yet'
+$sync.DEmptyS = 'It loads automatically when you open this view.'
 
 # ----------------------------------------------------------- UI helpers
 function Add-Log {
@@ -921,15 +1037,29 @@ function Set-HistoryEmpty {
     $sync.HEmptyT = $Title; $sync.HEmptyS = $Sub
 }
 
+function Set-DevicesEmpty {
+    param([string]$Title, [string]$Sub)
+    $sync.DEmptyT = $Title; $sync.DEmptyS = $Sub
+}
+
+function Get-ActiveView {
+    if ($sync.ViewHistory.IsChecked) { return 'History' }
+    if ($sync.ViewDevices.IsChecked) { return 'Devices' }
+    return 'Updates'
+}
+
 function Refresh-EmptyState {
-    $historyView = [bool]$sync.ViewHistory.IsChecked
-    $source = if ($historyView) { $sync.GridHistory.ItemsSource } else { $sync.GridUpdates.ItemsSource }
+    $view = Get-ActiveView
+    $source = $sync.GridUpdates.ItemsSource
+    if ($view -eq 'History') { $source = $sync.GridHistory.ItemsSource }
+    if ($view -eq 'Devices') { $source = $sync.GridDevices.ItemsSource }
     $hasRows = ($source -and $source.Count -gt 0)
     if ($hasRows) {
         $sync.EmptyState.Visibility = 'Collapsed'
     } else {
-        if ($historyView) { $sync.EmptyTitle.Text = $sync.HEmptyT; $sync.EmptySub.Text = $sync.HEmptyS }
-        else              { $sync.EmptyTitle.Text = $sync.UEmptyT; $sync.EmptySub.Text = $sync.UEmptyS }
+        if ($view -eq 'History') { $sync.EmptyTitle.Text = $sync.HEmptyT; $sync.EmptySub.Text = $sync.HEmptyS }
+        elseif ($view -eq 'Devices') { $sync.EmptyTitle.Text = $sync.DEmptyT; $sync.EmptySub.Text = $sync.DEmptyS }
+        else { $sync.EmptyTitle.Text = $sync.UEmptyT; $sync.EmptySub.Text = $sync.UEmptyS }
         $sync.EmptyState.Visibility = 'Visible'
     }
 }
@@ -951,10 +1081,12 @@ function Set-Busy {
     param([bool]$On, [string]$Status = '')
     $sync.BtnScan.IsEnabled           = -not $On
     $sync.BtnHistoryRefresh.IsEnabled = -not $On
+    $sync.BtnDevicesRefresh.IsEnabled = -not $On
     $sync.RadDrivers.IsEnabled        = -not $On
     $sync.RadAll.IsEnabled            = -not $On
     $sync.ViewUpdates.IsEnabled       = -not $On
     $sync.ViewHistory.IsEnabled       = -not $On
+    $sync.ViewDevices.IsEnabled       = -not $On
     $sync.ChkSelectAll.IsEnabled      = -not $On
     if ($On) {
         $sync.BtnInstall.IsEnabled   = $false
@@ -968,23 +1100,37 @@ function Set-Busy {
 
 function Show-View {
     param([string]$View)
+    # everything off first
+    $sync.GridUpdates.Visibility       = 'Collapsed'
+    $sync.GridHistory.Visibility       = 'Collapsed'
+    $sync.GridDevices.Visibility       = 'Collapsed'
+    $sync.BtnScan.Visibility           = 'Collapsed'
+    $sync.BtnHistoryRefresh.Visibility = 'Collapsed'
+    $sync.BtnDevicesRefresh.Visibility = 'Collapsed'
+    $sync.ScopeBox.Visibility          = 'Collapsed'
+    $sync.ChkSelectAll.Visibility      = 'Collapsed'
+    $sync.InstallBar.Visibility        = 'Collapsed'
+    $sync.DetailsCard.Visibility       = 'Collapsed'
+    $sync.BtnOem.Visibility            = 'Collapsed'
+    $sync.BtnGpu.Visibility            = 'Collapsed'
+
     if ($View -eq 'History') {
-        $sync.GridUpdates.Visibility       = 'Collapsed'
         $sync.GridHistory.Visibility       = 'Visible'
-        $sync.BtnScan.Visibility           = 'Collapsed'
         $sync.BtnHistoryRefresh.Visibility = 'Visible'
-        $sync.ScopeBox.Visibility          = 'Collapsed'
-        $sync.ChkSelectAll.Visibility      = 'Collapsed'
-        $sync.InstallBar.Visibility        = 'Collapsed'
-        $sync.DetailsCard.Visibility       = 'Collapsed'
-    } else {
-        $sync.GridUpdates.Visibility       = 'Visible'
-        $sync.GridHistory.Visibility       = 'Collapsed'
-        $sync.BtnScan.Visibility           = 'Visible'
-        $sync.BtnHistoryRefresh.Visibility = 'Collapsed'
-        $sync.ScopeBox.Visibility          = 'Visible'
-        $sync.ChkSelectAll.Visibility      = 'Visible'
-        $sync.InstallBar.Visibility        = 'Visible'
+    }
+    elseif ($View -eq 'Devices') {
+        $sync.GridDevices.Visibility       = 'Visible'
+        $sync.BtnDevicesRefresh.Visibility = 'Visible'
+        if ($sync.DevicesLoaded -and $sync.OemUrl) { $sync.BtnOem.Visibility = 'Visible' }
+        if ($sync.DevicesLoaded -and $sync.GpuUrl) { $sync.BtnGpu.Visibility = 'Visible' }
+        if ($sync.GridDevices.SelectedItem) { $sync.DetailsCard.Visibility = 'Visible' }
+    }
+    else {
+        $sync.GridUpdates.Visibility  = 'Visible'
+        $sync.BtnScan.Visibility      = 'Visible'
+        $sync.ScopeBox.Visibility     = 'Visible'
+        $sync.ChkSelectAll.Visibility = 'Visible'
+        $sync.InstallBar.Visibility   = 'Visible'
         if ($sync.GridUpdates.SelectedItem) { $sync.DetailsCard.Visibility = 'Visible' }
     }
     Refresh-EmptyState
@@ -1234,6 +1380,121 @@ $HistoryScript = {
     }
 }
 
+# ---------------------------------------------------- worker: devices
+$DevicesScript = {
+    function Log { param($m) $sync.LogQueue.Enqueue("[$((Get-Date).ToString('HH:mm:ss'))] $m") }
+    $ProgressPreference = 'SilentlyContinue'
+    try {
+        Log 'Scanning installed devices and drivers... (10-20 seconds)'
+
+        # index signed drivers by device instance path
+        $drv = @{}
+        foreach ($d in @(Get-CimInstance Win32_PnPSignedDriver -ErrorAction SilentlyContinue)) {
+            if ($d.DeviceID -and -not $drv.ContainsKey($d.DeviceID)) { $drv[$d.DeviceID] = $d }
+        }
+
+        $problems = 0
+        $list = foreach ($e in @(Get-CimInstance Win32_PnPEntity -ErrorAction Stop)) {
+            $code = 0
+            try { if ($null -ne $e.ConfigManagerErrorCode) { $code = [int]$e.ConfigManagerErrorCode } } catch {}
+            $d = $null
+            if ($e.PNPDeviceID -and $drv.ContainsKey($e.PNPDeviceID)) { $d = $drv[$e.PNPDeviceID] }
+
+            # skip healthy entries that have no real driver (software/phantom devices)
+            if ($code -eq 0 -and -not $d) { continue }
+
+            $ver = ''; $date = ''; $prov = ''; $inf = ''
+            if ($d) {
+                $ver  = [string]$d.DriverVersion
+                try { if ($d.DriverDate) { $date = ([datetime]$d.DriverDate).ToString('yyyy-MM-dd') } } catch {}
+                $prov = [string]$d.DriverProviderName
+                $inf  = [string]$d.InfName
+            }
+
+            $cls = [string]$e.PNPClass
+            if (-not $cls) { $cls = 'Other' }
+
+            $statusKind = 'Ok'; $status = 'OK'
+            if ($code -eq 22)     { $statusKind = 'Disabled'; $status = 'Disabled' }
+            elseif ($code -eq 28) { $statusKind = 'NoDriver'; $status = 'No driver' }
+            elseif ($code -ne 0)  { $statusKind = 'Problem';  $status = "Error $code" }
+
+            $grp = $cls
+            if ($code -ne 0 -and $code -ne 22) { $grp = 'Needs attention'; $problems++ }
+
+            $hwid = ''
+            try { if ($e.HardwareID -and @($e.HardwareID).Count -gt 0) { $hwid = [string]@($e.HardwareID)[0] } } catch {}
+
+            $name = [string]$e.Name
+            if (-not $name) { $name = 'Unknown device' }
+
+            [pscustomobject]@{
+                SortA      = if ($grp -eq 'Needs attention') { 0 } else { 1 }
+                Name       = $name
+                Group      = $grp
+                Class      = $cls
+                Version    = $ver
+                DriverDate = $date
+                Status     = $status
+                StatusKind = $statusKind
+                HardwareID = $hwid
+                Provider   = $prov
+                Inf        = $inf
+            }
+        }
+        $sync.DevicesResults = @($list | Sort-Object SortA, Group, Name)
+
+        # vendor quick links (safe escape hatches for drivers WU does not carry)
+        $oemLabel = ''; $oemUrl = ''
+        try {
+            $cs = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue
+            $manu  = ([string]$cs.Manufacturer).Trim()
+            $model = ([string]$cs.Model).Trim()
+            if ($manu -and $manu -notmatch '(?i)O\.?E\.?M|System manufacturer|To be filled') {
+                $oemLabel = "$manu drivers"
+                if     ($manu -match '(?i)dell')               { $oemUrl = 'https://www.dell.com/support/home/' }
+                elseif ($manu -match '(?i)lenovo')             { $oemUrl = 'https://support.lenovo.com' }
+                elseif ($manu -match '(?i)hp|hewlett')         { $oemUrl = 'https://support.hp.com' }
+                elseif ($manu -match '(?i)asus')               { $oemUrl = 'https://www.asus.com/support/download-center/' }
+                elseif ($manu -match '(?i)acer')               { $oemUrl = 'https://www.acer.com/support' }
+                elseif ($manu -match '(?i)msi|micro-star')     { $oemUrl = 'https://www.msi.com/support' }
+                elseif ($manu -match '(?i)gigabyte')           { $oemUrl = 'https://www.gigabyte.com/Support' }
+                elseif ($manu -match '(?i)asrock')             { $oemUrl = 'https://www.asrock.com/support/' }
+                elseif ($manu -match '(?i)microsoft')          { $oemUrl = 'https://support.microsoft.com/surface' }
+                else { $oemUrl = 'https://www.google.com/search?q=' + [uri]::EscapeDataString("$manu $model drivers") }
+            }
+        } catch {}
+        $sync.OemLabel = $oemLabel
+        $sync.OemUrl   = $oemUrl
+
+        $gpuLabel = ''; $gpuUrl = ''
+        try {
+            $gpu = @(Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue | Select-Object -First 1)
+            if ($gpu.Count -gt 0) {
+                $gname = [string]$gpu[0].Name
+                if     ($gname -match '(?i)nvidia|geforce|quadro') { $gpuLabel = 'NVIDIA drivers'; $gpuUrl = 'https://www.nvidia.com/Download/index.aspx' }
+                elseif ($gname -match '(?i)amd|radeon')            { $gpuLabel = 'AMD drivers';    $gpuUrl = 'https://www.amd.com/en/support' }
+                elseif ($gname -match '(?i)intel')                 { $gpuLabel = 'Intel drivers';  $gpuUrl = 'https://www.intel.com/content/www/us/en/support/detect.html' }
+                elseif ($gname) { $gpuLabel = 'GPU drivers'; $gpuUrl = 'https://www.google.com/search?q=' + [uri]::EscapeDataString("$gname driver download") }
+            }
+        } catch {}
+        $sync.GpuLabel = $gpuLabel
+        $sync.GpuUrl   = $gpuUrl
+
+        Log "Found $($sync.DevicesResults.Count) devices with drivers - $problems need attention."
+        if ($problems -eq 0) { Log 'No problem devices detected. Nice and healthy!' }
+        else { Log 'Tip: select a problem device and use "Search Microsoft Update Catalog" with its hardware ID.' }
+    }
+    catch {
+        $sync.DevicesResults = @()
+        Log "ERROR scanning devices: $($_.Exception.Message)"
+    }
+    finally {
+        $sync.DevicesDone = $true
+        $sync.Busy = $false
+    }
+}
+
 # ---------------------------------------------------- worker: install
 $InstallScript = {
     function Log { param($m) $sync.LogQueue.Enqueue("[$((Get-Date).ToString('HH:mm:ss'))] $m") }
@@ -1323,7 +1584,7 @@ $window.Add_PreviewKeyDown({
     }
 })
 
-# ------------------------------------------------------- history loading
+# --------------------------------------------- history / devices loading
 function Start-HistoryLoad {
     if ($sync.Busy) { return }
     Set-HistoryEmpty 'Loading update history...' 'One moment.'
@@ -1332,13 +1593,45 @@ function Start-HistoryLoad {
     $null = Start-Worker -Script $HistoryScript
 }
 
+function Start-DevicesLoad {
+    if ($sync.Busy) { return }
+    Set-DevicesEmpty 'Scanning devices...' 'Collecting every installed driver, 10-20 seconds.'
+    Refresh-EmptyState
+    Set-Busy $true 'Scanning devices and drivers...'
+    $null = Start-Worker -Script $DevicesScript
+}
+
 # ------------------------------------------------------------ UI events
 $sync.ViewUpdates.Add_Click({ Show-View 'Updates' })
 $sync.ViewHistory.Add_Click({
     Show-View 'History'
     if (-not $sync.HistoryLoaded) { Start-HistoryLoad }
 })
+$sync.ViewDevices.Add_Click({
+    Show-View 'Devices'
+    if (-not $sync.DevicesLoaded) { Start-DevicesLoad }
+})
 $sync.BtnHistoryRefresh.Add_Click({ Start-HistoryLoad })
+$sync.BtnDevicesRefresh.Add_Click({ Start-DevicesLoad })
+
+$sync.BtnOem.Add_Click({ if ($sync.OemUrl) { Start-Process $sync.OemUrl } })
+$sync.BtnGpu.Add_Click({ if ($sync.GpuUrl) { Start-Process $sync.GpuUrl } })
+
+$sync.BtnCopyHwid.Add_Click({
+    if ($sync.CurrentHwid) {
+        try {
+            [System.Windows.Clipboard]::SetText($sync.CurrentHwid)
+            $sync.StatusText.Text = "Hardware ID copied: $($sync.CurrentHwid)"
+        } catch {}
+    }
+})
+$sync.BtnCatalog.Add_Click({
+    if ($sync.CurrentHwid) {
+        $url = 'https://www.catalog.update.microsoft.com/Search.aspx?q=' +
+               [uri]::EscapeDataString($sync.CurrentHwid)
+        Start-Process $url
+    }
+})
 
 $sync.BtnScan.Add_Click({
     if ($sync.Busy) { return }
@@ -1365,11 +1658,10 @@ $sync.ChkSelectAll.Add_Click({
 $sync.FilterBox.Add_TextChanged({
     if ([string]::IsNullOrEmpty($sync.FilterBox.Text)) { $sync.FilterHint.Visibility = 'Visible' }
     else { $sync.FilterHint.Visibility = 'Collapsed' }
-    if ($sync.GridUpdates.ItemsSource) {
-        [System.Windows.Data.CollectionViewSource]::GetDefaultView($sync.GridUpdates.ItemsSource).Refresh()
-    }
-    if ($sync.GridHistory.ItemsSource) {
-        [System.Windows.Data.CollectionViewSource]::GetDefaultView($sync.GridHistory.ItemsSource).Refresh()
+    foreach ($grid in @($sync.GridUpdates, $sync.GridHistory, $sync.GridDevices)) {
+        if ($grid.ItemsSource) {
+            [System.Windows.Data.CollectionViewSource]::GetDefaultView($grid.ItemsSource).Refresh()
+        }
     }
 })
 
@@ -1378,10 +1670,10 @@ $sync.GridUpdates.AddHandler(
     [System.Windows.Controls.Primitives.ButtonBase]::ClickEvent,
     [System.Windows.RoutedEventHandler]{ Update-SelCount })
 
-# details pane follows the selected row
+# details pane follows the selected update row
 $sync.GridUpdates.Add_SelectionChanged({
     $it = $sync.GridUpdates.SelectedItem
-    if ($it -and -not [bool]$sync.ViewHistory.IsChecked) {
+    if ($it -and (Get-ActiveView) -eq 'Updates') {
         $sync.DetailTitle.Text = $it.Title
         $meta = @()
         if ($it.Device)       { $meta += $it.Device }
@@ -1392,8 +1684,37 @@ $sync.GridUpdates.Add_SelectionChanged({
         $sync.DetailMeta.Text = ($meta -join '   |   ')
         if ($it.Description) { $sync.DetailDesc.Text = $it.Description }
         else                 { $sync.DetailDesc.Text = 'No description provided by the publisher.' }
+        $sync.DetailActions.Visibility = 'Collapsed'
         $sync.DetailsCard.Visibility = 'Visible'
-    } else {
+    } elseif ((Get-ActiveView) -eq 'Updates') {
+        $sync.DetailsCard.Visibility = 'Collapsed'
+    }
+})
+
+# details pane follows the selected device row
+$sync.GridDevices.Add_SelectionChanged({
+    $it = $sync.GridDevices.SelectedItem
+    if ($it -and (Get-ActiveView) -eq 'Devices') {
+        $sync.DetailTitle.Text = $it.Name
+        $meta = @()
+        if ($it.Class)      { $meta += $it.Class }
+        if ($it.Version)    { $meta += "version $($it.Version)" }
+        if ($it.DriverDate) { $meta += "driver date: $($it.DriverDate)" }
+        if ($it.Provider)   { $meta += $it.Provider }
+        if ($it.Inf)        { $meta += $it.Inf }
+        $meta += $it.Status
+        $sync.DetailMeta.Text = ($meta -join '   |   ')
+        if ($it.HardwareID) {
+            $sync.DetailDesc.Text = "Hardware ID: $($it.HardwareID)"
+            $sync.CurrentHwid = $it.HardwareID
+            $sync.DetailActions.Visibility = 'Visible'
+        } else {
+            $sync.DetailDesc.Text = 'No hardware ID reported for this device.'
+            $sync.CurrentHwid = ''
+            $sync.DetailActions.Visibility = 'Collapsed'
+        }
+        $sync.DetailsCard.Visibility = 'Visible'
+    } elseif ((Get-ActiveView) -eq 'Devices') {
         $sync.DetailsCard.Visibility = 'Collapsed'
     }
 })
@@ -1554,6 +1875,62 @@ $timer.Add_Tick({
         Refresh-EmptyState
     }
 
+    if ($sync.DevicesDone) {
+        $sync.DevicesDone = $false
+        $sync.DevicesLoaded = $true
+        $items = [System.Collections.ObjectModel.ObservableCollection[DriverDrop.DeviceItem]]::new()
+        $problems = 0
+        foreach ($r in $sync.DevicesResults) {
+            $item = New-Object DriverDrop.DeviceItem
+            $item.Name       = $r.Name
+            $item.Group      = $r.Group
+            $item.Class      = $r.Class
+            $item.Version    = $r.Version
+            $item.DriverDate = $r.DriverDate
+            $item.Status     = $r.Status
+            $item.StatusKind = $r.StatusKind
+            $item.HardwareID = $r.HardwareID
+            $item.Provider   = $r.Provider
+            $item.Inf        = $r.Inf
+            if ($r.Group -eq 'Needs attention') { $problems++ }
+            $items.Add($item)
+        }
+        $sync.GridDevices.ItemsSource = $items
+
+        # group by class (problems first) + live filter
+        $view = [System.Windows.Data.CollectionViewSource]::GetDefaultView($items)
+        $view.GroupDescriptions.Clear()
+        $view.GroupDescriptions.Add((New-Object System.Windows.Data.PropertyGroupDescription 'Group'))
+        $view.Filter = [Predicate[object]]{
+            param($obj)
+            $text = $sync.FilterBox.Text
+            if ([string]::IsNullOrWhiteSpace($text)) { return $true }
+            $hit = $false
+            if ($obj.Name       -and $obj.Name.IndexOf($text,       [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { $hit = $true }
+            if ($obj.Class      -and $obj.Class.IndexOf($text,      [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { $hit = $true }
+            if ($obj.Version    -and $obj.Version.IndexOf($text,    [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { $hit = $true }
+            if ($obj.HardwareID -and $obj.HardwareID.IndexOf($text, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { $hit = $true }
+            return $hit
+        }
+
+        # vendor quick links
+        if ($sync.OemUrl) { $sync.BtnOem.Content = $sync.OemLabel }
+        if ($sync.GpuUrl) { $sync.BtnGpu.Content = $sync.GpuLabel }
+        if ((Get-ActiveView) -eq 'Devices') {
+            if ($sync.OemUrl) { $sync.BtnOem.Visibility = 'Visible' }
+            if ($sync.GpuUrl) { $sync.BtnGpu.Visibility = 'Visible' }
+        }
+
+        if ($items.Count -gt 0) {
+            if ($problems -gt 0) { Set-Busy $false "Found $($items.Count) devices - $problems need attention (top of the list)." }
+            else                 { Set-Busy $false "Found $($items.Count) devices - all healthy." }
+        } else {
+            Set-DevicesEmpty 'No devices found' 'The device scan returned nothing - try Rescan devices.'
+            Set-Busy $false 'No devices found.'
+        }
+        Refresh-EmptyState
+    }
+
     if ($sync.InstallDone) {
         $sync.InstallDone = $false
         $sync.GridUpdates.ItemsSource = $null
@@ -1579,7 +1956,7 @@ $timer.Add_Tick({
 # ------------------------------------------------------------------ start
 Add-Log "$AppName v$AppVer ready on $env:COMPUTERNAME (PowerShell $($PSVersionTable.PSVersion))"
 Add-Log 'Pick a scope, click "Scan for updates", tick what you want, then "Install selected".'
-Add-Log "New here? Click the v$AppVer badge in the title bar to see the changelog."
+Add-Log 'New: the Devices view finds hardware Windows Update cannot help with - safe links included.'
 $sync.StatusText.Text = 'Ready - click "Scan for updates" to begin.'
 Update-SelCount
 Refresh-EmptyState

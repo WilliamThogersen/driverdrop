@@ -3,6 +3,19 @@
 All notable changes to DriverDrop are documented here, newest first.
 You can also see this inside the app - click the version badge in the title bar.
 
+## [1.5.0] - 2026-07-31
+
+### Added
+- **Devices view**: every installed device with its driver version and date, grouped by class
+- Devices with problems (no driver installed, error codes) are flagged with red/amber pills and grouped at the top as "Needs attention"
+- Click a device to see its hardware ID with a one-click **Copy** button
+- **Search Microsoft Update Catalog** button: looks up the selected hardware ID on catalog.update.microsoft.com - drivers Microsoft hosts but Windows Update does not offer automatically
+- Auto-detected quick links to your **PC maker's** support page and your **GPU vendor's** driver page
+- The filter box also matches device names, classes, versions and hardware IDs
+
+### Notes
+- DriverDrop deliberately never downloads drivers from third-party driver packs - only Microsoft-hosted sources and official vendor pages
+
 ## [1.4.1] - 2026-07-31
 
 ### Changed
