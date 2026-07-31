@@ -1,5 +1,5 @@
 <#  =====================================================================
-    DriverDrop v1.4.0  -  free, open-source Windows driver & update picker
+    DriverDrop v1.4.1  -  free, open-source Windows driver & update picker
     ---------------------------------------------------------------------
     * Scans Microsoft Update for driver updates (or all updates)
     * Lets you tick exactly what you want installed - nothing more
@@ -11,7 +11,9 @@
 
     Run straight from GitHub (any PowerShell window, it self-elevates):
 
-        irm "https://raw.githubusercontent.com/WilliamThogersen/driverdrop/staging/DriverDrop.ps1" | iex
+        irm "https://raw.githubusercontent.com/WilliamThogersen/driverdrop/prod/DriverDrop.ps1" | iex
+
+    Branches: prod = stable releases, staging = ongoing development.
 
     Or run the file locally:
 
@@ -23,14 +25,23 @@
     ===================================================================== #>
 
 # ---------------------------------------------------------------- config
-# This URL is used to self-elevate when the script is run via  irm | iex
-$ScriptUrl = 'https://raw.githubusercontent.com/WilliamThogersen/driverdrop/staging/DriverDrop.ps1'
+# This URL is used to self-elevate when the script is run via  irm | iex.
+# It points at the stable prod branch ON PURPOSE - even in the staging copy -
+# so end users always land on stable and staging-to-prod merges need no edits.
+# When testing the staging branch yourself, start from an already-elevated
+# PowerShell window so this fallback is never used.
+$ScriptUrl = 'https://raw.githubusercontent.com/WilliamThogersen/driverdrop/prod/DriverDrop.ps1'
 $AppName   = 'DriverDrop'
-$AppVer    = '1.4.0'
+$AppVer    = '1.4.1'
 
 # ------------------------------------------------------------- changelog
 # Newest first. Shown in-app when the version badge is clicked.
 $ChangeLog = @(
+    @{ Version = '1.4.1'; Date = '2026-07-31'; Changes = @(
+        'Two-branch setup: prod is the stable branch, staging is ongoing development',
+        'The public one-liner and self-elevation now always use the stable prod branch',
+        'Testing staging? Run its one-liner from an already-admin PowerShell window'
+    )}
     @{ Version = '1.4.0'; Date = '2026-07-31'; Changes = @(
         'Added this changelog - click the version badge in the title bar any time',
         'Added CHANGELOG.md to the repo so changes are tracked on GitHub too',
@@ -551,7 +562,7 @@ $sync.RebootRequired  = $false
           <Button Name="BtnVersion" Style="{StaticResource PillButton}" VerticalAlignment="Center"
                   Margin="8,0,0,0" WindowChrome.IsHitTestVisibleInChrome="True"
                   ToolTip="What is new - click to see the changelog">
-            <TextBlock Name="BtnVersionText" Text="v1.4.0"/>
+            <TextBlock Name="BtnVersionText" Text="v1.4.1"/>
           </Button>
           <TextBlock Text="no ads - no paywall - your choice" FontSize="11"
                      Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="14,0,0,0"/>

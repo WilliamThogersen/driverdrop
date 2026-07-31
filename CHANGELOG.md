@@ -3,6 +3,13 @@
 All notable changes to DriverDrop are documented here, newest first.
 You can also see this inside the app - click the version badge in the title bar.
 
+## [1.4.1] - 2026-07-31
+
+### Changed
+- Two-branch workflow: `prod` is the stable branch everyone runs from; `staging` is ongoing development
+- The public one-liner and the script's self-elevation URL now point at `prod` (in both branches, so merges need no edits)
+- README documents both branches and the dev one-liner
+
 ## [1.4.0] - 2026-07-31
 
 ### Added
