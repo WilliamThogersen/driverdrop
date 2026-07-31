@@ -9,7 +9,7 @@ Everything is one readable PowerShell file. Read it before you run it — that's
 Open **any** PowerShell window (it will ask for admin by itself) and run:
 
 ```powershell
-irm "https://raw.githubusercontent.com/YOURUSER/YOURREPO/main/DriverDrop.ps1" | iex
+irm "https://raw.githubusercontent.com/WilliamThogersen/driverdrop/Stable/DriverDrop.ps1" | iex
 ```
 
 Or download `DriverDrop.ps1` and run it locally:
