@@ -1,14 +1,16 @@
 <#  =====================================================================
-    DriverDrop v1.2.0  -  free, open-source Windows driver & update picker
+    DriverDrop v1.3.0  -  free, open-source Windows driver & update picker
     ---------------------------------------------------------------------
     * Scans Microsoft Update for driver updates (or all updates)
     * Lets you tick exactly what you want installed - nothing more
     * Optional system restore point before installing
     * No ads, no paywall, no telemetry, one readable .ps1 file
 
-    v1.2: shows WHAT each update targets and WHEN the driver is from -
-    new Device and Released columns, a details pane for the selected
-    update, and a History view of everything installed so far.
+    v1.3: human-readable History - raw driver titles are parsed into
+    clean names, entries are grouped by day (Today / Yesterday / date),
+    duplicates are collapsed, Store app IDs are cleaned up, and every
+    row gets a category pill (driver class, Store app, Defender...).
+    v1.2: Device + Released columns, details pane, History view.
     v1.1: modern UI overhaul (custom title bar, segments, toggle, filter).
 
     Run straight from GitHub (any PowerShell window, it self-elevates):
@@ -28,7 +30,7 @@
 # This URL is used to self-elevate when the script is run via  irm | iex
 $ScriptUrl = 'https://raw.githubusercontent.com/WilliamThogersen/driverdrop/staging/DriverDrop.ps1'
 $AppName   = 'DriverDrop'
-$AppVer    = '1.2.0'
+$AppVer    = '1.3.0'
 
 # ------------------------------------------------------------- elevation
 $principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
@@ -133,11 +135,13 @@ if (-not ([System.Management.Automation.PSTypeName]'DriverDrop.HistoryItem').Typ
     Add-Type -TypeDefinition @"
 namespace DriverDrop {
     public class HistoryItem {
-        public string Date      { get; set; }
-        public string Title     { get; set; }
-        public string Operation { get; set; }
-        public string Result    { get; set; }
-        public string KB        { get; set; }
+        public string Day      { get; set; }
+        public string Time     { get; set; }
+        public string Title    { get; set; }
+        public string Category { get; set; }
+        public string Kind     { get; set; }
+        public string Result   { get; set; }
+        public string KB       { get; set; }
     }
 }
 "@
@@ -483,7 +487,7 @@ $sync.RebootRequired  = $false
                      Foreground="{StaticResource TextBrush}" VerticalAlignment="Center" Margin="10,0,0,0"/>
           <Border CornerRadius="8" Background="#FF26262D" Padding="7,2"
                   VerticalAlignment="Center" Margin="8,0,0,0">
-            <TextBlock Text="v1.2.0" FontSize="10" Foreground="{StaticResource MutedBrush}"/>
+            <TextBlock Text="v1.3.0" FontSize="10" Foreground="{StaticResource MutedBrush}"/>
           </Border>
           <TextBlock Text="no ads - no paywall - your choice" FontSize="11"
                      Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="14,0,0,0"/>
@@ -625,14 +629,53 @@ $sync.RebootRequired  = $false
                       Background="Transparent" BorderThickness="0" RowHeaderWidth="0"
                       SelectionMode="Single" SelectionUnit="FullRow" IsReadOnly="True"
                       Margin="6" Visibility="Collapsed">
+              <DataGrid.GroupStyle>
+                <GroupStyle>
+                  <GroupStyle.HeaderTemplate>
+                    <DataTemplate>
+                      <StackPanel Orientation="Horizontal" Margin="6,14,0,4">
+                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="12"
+                                   Foreground="#FFC9C9D2" VerticalAlignment="Center"/>
+                        <Border CornerRadius="8" Background="#FF32323A" Padding="7,1"
+                                Margin="8,0,0,0" VerticalAlignment="Center">
+                          <TextBlock Text="{Binding ItemCount}" FontSize="10" Foreground="#FF9A9AA5"/>
+                        </Border>
+                      </StackPanel>
+                    </DataTemplate>
+                  </GroupStyle.HeaderTemplate>
+                </GroupStyle>
+              </DataGrid.GroupStyle>
               <DataGrid.Columns>
-                <DataGridTextColumn Header="Date" Binding="{Binding Date}" Width="130"
+                <DataGridTextColumn Header="Time" Binding="{Binding Time}" Width="64"
                                     ElementStyle="{StaticResource CellTextMuted}"/>
                 <DataGridTextColumn Header="Update" Binding="{Binding Title}" Width="*"
                                     ElementStyle="{StaticResource CellText}"/>
-                <DataGridTextColumn Header="Action" Binding="{Binding Operation}" Width="110"
-                                    ElementStyle="{StaticResource CellTextMuted}"/>
-                <DataGridTemplateColumn Header="Result" Width="110">
+                <DataGridTemplateColumn Header="Category" Width="130">
+                  <DataGridTemplateColumn.CellTemplate>
+                    <DataTemplate>
+                      <Border x:Name="cpill" CornerRadius="9" Padding="10,3" Background="#FF32323A"
+                              HorizontalAlignment="Left" VerticalAlignment="Center">
+                        <TextBlock x:Name="cpillText" Text="{Binding Category}" FontSize="11"
+                                   Foreground="#FFB9B9C3"/>
+                      </Border>
+                      <DataTemplate.Triggers>
+                        <DataTrigger Binding="{Binding Kind}" Value="Driver">
+                          <Setter TargetName="cpill" Property="Background" Value="#333D7EFF"/>
+                          <Setter TargetName="cpillText" Property="Foreground" Value="#FF9DBBFF"/>
+                        </DataTrigger>
+                        <DataTrigger Binding="{Binding Kind}" Value="Store">
+                          <Setter TargetName="cpill" Property="Background" Value="#338B5CF6"/>
+                          <Setter TargetName="cpillText" Property="Foreground" Value="#FFC9B8F7"/>
+                        </DataTrigger>
+                        <DataTrigger Binding="{Binding Kind}" Value="Defender">
+                          <Setter TargetName="cpill" Property="Background" Value="#332FA3A0"/>
+                          <Setter TargetName="cpillText" Property="Foreground" Value="#FF8FD6D3"/>
+                        </DataTrigger>
+                      </DataTemplate.Triggers>
+                    </DataTemplate>
+                  </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTemplateColumn Header="Result" Width="104">
                   <DataGridTemplateColumn.CellTemplate>
                     <DataTemplate>
                       <Border x:Name="rpill" CornerRadius="9" Padding="10,3" Background="#FF32323A"
@@ -649,11 +692,15 @@ $sync.RebootRequired  = $false
                           <Setter TargetName="rpill" Property="Background" Value="#33E81123"/>
                           <Setter TargetName="rpillText" Property="Foreground" Value="#FFFF9AA3"/>
                         </DataTrigger>
+                        <DataTrigger Binding="{Binding Result}" Value="Removed">
+                          <Setter TargetName="rpill" Property="Background" Value="#33E8A33D"/>
+                          <Setter TargetName="rpillText" Property="Foreground" Value="#FFE8C08A"/>
+                        </DataTrigger>
                       </DataTemplate.Triggers>
                     </DataTemplate>
                   </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
-                <DataGridTextColumn Header="KB" Binding="{Binding KB}" Width="100"
+                <DataGridTextColumn Header="KB" Binding="{Binding KB}" Width="96"
                                     ElementStyle="{StaticResource CellTextMuted}"/>
               </DataGrid.Columns>
             </DataGrid>
@@ -930,24 +977,100 @@ $HistoryScript = {
         try   { $hist = @(Get-WUHistory -Last 300 -ErrorAction Stop) }
         catch { $hist = @(Get-WUHistory -ErrorAction Stop | Select-Object -First 300) }
 
-        $list = foreach ($h in $hist) {
-            $dateText = ''
-            try { $dateText = ([datetime]$h.Date).ToString('yyyy-MM-dd HH:mm') } catch {}
+        $today     = (Get-Date).Date
+        $yesterday = $today.AddDays(-1)
+
+        $raw = foreach ($h in $hist) {
+            $dt = $null
+            try { $dt = [datetime]$h.Date } catch {}
+            if (-not $dt) { continue }
+
+            $day = $dt.ToString('d. MMMM yyyy')
+            if ($dt.Date -eq $today)     { $day = 'Today' }
+            elseif ($dt.Date -eq $yesterday) { $day = 'Yesterday' }
+
             $kb = ''
             try { if ($h.KB) { $kb = [string]$h.KB } } catch {}
-            if (-not $kb -and $h.Title -match '(KB\d{5,})') { $kb = $Matches[1] }
+            $title = ([string]$h.Title).Trim()
+            if (-not $kb -and $title -match '(KB\d{5,})') { $kb = $Matches[1] }
             $op = ''
             try { $op = ([string]$h.Operationname).Trim() } catch {}
+            $result = [string]$h.Result
+            if ($op -match 'Uninstall' -and $result -eq 'Succeeded') { $result = 'Removed' }
+
+            # ------- make the raw Windows Update title human readable -------
+            $kind  = 'Update'
+            $cat   = 'Update'
+            $clean = $title
+
+            if ($title -match '^[0-9A-Z]{10,14}-(?<name>.+)$') {
+                # Store app entries like 9NRZT3Q9R3DL-Microsoft.WindowsAppRuntime.2
+                $clean = $Matches['name']
+                $kind  = 'Store'
+                $cat   = 'Store app'
+            }
+            elseif ($title -match 'KB2267602' -or $title -match '(?i)defender') {
+                $kind = 'Defender'
+                $cat  = 'Defender'
+            }
+            elseif ($title -notmatch 'KB\d{5,}') {
+                $parts = @($title -split ' - ')
+                if ($parts.Count -ge 3) {
+                    # driver-style title: Manufacturer - Class - <date?> - <device?> - <version?>
+                    $kind = 'Driver'
+                    $mfr  = $parts[0].Trim()
+                    $cls  = $parts[1].Trim()
+                    $cat  = $cls
+                    $rest = @()
+                    $ver  = ''
+                    $drvDate = ''
+                    foreach ($seg in $parts[2..($parts.Count - 1)]) {
+                        $seg = $seg.Trim()
+                        $parsed = [datetime]::MinValue
+                        $isDate = [datetime]::TryParse($seg,
+                                    [System.Globalization.CultureInfo]::InvariantCulture,
+                                    [System.Globalization.DateTimeStyles]::None, [ref]$parsed)
+                        if ($isDate) {
+                            # Intel dates some drivers 1968 on purpose; hide anything that old
+                            if ($parsed.Year -ge 1990) { $drvDate = $parsed.ToString('yyyy-MM-dd') }
+                            continue
+                        }
+                        if ($seg -match '^[vV]?\d+(\.\d+)+$') { $ver = $seg; continue }
+                        $rest += $seg
+                    }
+                    if ($rest.Count -gt 0) {
+                        $clean = ($rest -join ' - ')
+                        if ($ver) { $clean += " $ver" }
+                    } else {
+                        $clean = "$mfr $cls driver"
+                        if ($ver) { $clean += " $ver" }
+                    }
+                    if ($drvDate) { $clean += " (driver from $drvDate)" }
+                }
+            }
+
             [pscustomobject]@{
-                Date      = $dateText
-                Title     = [string]$h.Title
-                Operation = $op
-                Result    = [string]$h.Result
-                KB        = $kb
+                SortKey  = $dt.ToString('yyyy-MM-dd HH:mm:ss')
+                Day      = $day
+                Time     = $dt.ToString('HH:mm')
+                Title    = $clean
+                Category = $cat
+                Kind     = $kind
+                Result   = $result
+                KB       = $kb
+                Op       = $op
             }
         }
-        $sync.HistoryResults = @($list | Sort-Object Date -Descending)
-        Log "Loaded $($sync.HistoryResults.Count) history entries."
+
+        # collapse duplicates within the same day (same title + outcome)
+        $final = foreach ($g in ($raw | Group-Object { $_.Day + '|' + $_.Title + '|' + $_.Result + '|' + $_.Op })) {
+            $top = $g.Group | Sort-Object SortKey -Descending | Select-Object -First 1
+            if ($g.Count -gt 1) { $top.Title = "$($top.Title)  (x$($g.Count))" }
+            $top
+        }
+
+        $sync.HistoryResults = @($final | Sort-Object SortKey -Descending)
+        Log "Loaded $($sync.HistoryResults.Count) history entries ($($raw.Count) raw, duplicates collapsed)."
     }
     catch {
         $sync.HistoryResults = @()
@@ -1232,29 +1355,34 @@ $timer.Add_Tick({
         $items = [System.Collections.ObjectModel.ObservableCollection[DriverDrop.HistoryItem]]::new()
         foreach ($r in $sync.HistoryResults) {
             $item = New-Object DriverDrop.HistoryItem
-            $item.Date      = $r.Date
-            $item.Title     = $r.Title
-            $item.Operation = $r.Operation
-            $item.Result    = $r.Result
-            $item.KB        = $r.KB
+            $item.Day      = $r.Day
+            $item.Time     = $r.Time
+            $item.Title    = $r.Title
+            $item.Category = $r.Category
+            $item.Kind     = $r.Kind
+            $item.Result   = $r.Result
+            $item.KB       = $r.KB
             $items.Add($item)
         }
         $sync.GridHistory.ItemsSource = $items
 
-        # live filter over the history list
+        # group rows by day + live filter
         $view = [System.Windows.Data.CollectionViewSource]::GetDefaultView($items)
+        $view.GroupDescriptions.Clear()
+        $view.GroupDescriptions.Add((New-Object System.Windows.Data.PropertyGroupDescription 'Day'))
         $view.Filter = [Predicate[object]]{
             param($obj)
             $text = $sync.FilterBox.Text
             if ([string]::IsNullOrWhiteSpace($text)) { return $true }
             $hit = $false
-            if ($obj.Title -and $obj.Title.IndexOf($text, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { $hit = $true }
-            if ($obj.KB    -and $obj.KB.IndexOf($text,    [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { $hit = $true }
+            if ($obj.Title    -and $obj.Title.IndexOf($text,    [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { $hit = $true }
+            if ($obj.KB       -and $obj.KB.IndexOf($text,       [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { $hit = $true }
+            if ($obj.Category -and $obj.Category.IndexOf($text, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { $hit = $true }
             return $hit
         }
 
         if ($items.Count -gt 0) {
-            Set-Busy $false "History loaded - $($items.Count) entries (newest first)."
+            Set-Busy $false "History loaded - $($items.Count) entries, newest first."
         } else {
             Set-HistoryEmpty 'No history found' 'Windows has no recorded update history on this machine.'
             Set-Busy $false 'No update history found.'
